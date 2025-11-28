@@ -1,0 +1,17 @@
+
+exp_dir: "/home/ilia/coding/Research/PhD/transcarpathian-gold-data/exp_results"
+exp_name: collecting_be
+tagging_settings:
+  inputs: 
+    - file: "depparse_gold_LA1491.conllu"
+      lemma: "бути"
+      alias: "H"
+    - file: "depparse_gold_LA1451.conllu"
+      lemma: "бути"
+      alias: "B"
+    - file: "topics_depparse_gold_LA1407.conllu"
+      lemma: "биті"
+      alias: "L"
+    - file: "uk_parlamint-ud-test.conllu"
+      lemma: "бути"
+      alias: "U"
