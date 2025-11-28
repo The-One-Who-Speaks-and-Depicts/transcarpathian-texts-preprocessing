@@ -1,0 +1,5 @@
+folder_name: exp_1
+tagging_settings: 
+  input_file: "/home/ilia/Дакументы/PhD Vienna/КИРПИЧ/Data/slavic_dialects/Ukrainian/Lemkish/Ukrainische_Mundarten_1940/LA1407.conllu"
+  stage: pos
+  phase: pred
