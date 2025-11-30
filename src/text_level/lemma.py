@@ -24,6 +24,9 @@ def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk
                         new_form = re.sub('\"', '', key)
                         new_form = re.sub('wf=', '', new_form)
                         word.text = new_form
+                if not pretagged:
+                    word.upos = '_'
+                    word.feats = '_'
     logger.debug("%s loaded", input_file_path)
     nlp = stanza.Pipeline(
         lang=lang,
@@ -37,16 +40,18 @@ def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk
             use_gpu=True,
             tokenize_pretokenized=True
             )
-    logger.debug("Part-of-speech tagging pipeline prepared")
+    logger.debug("Lemmatisation tagging pipeline prepared, settings: %s", nlp)
     doc_processed = nlp(doc_for_procesing)
     for sent_idx, sent in enumerate(doc_processed.sentences):
         for tkn_idx, token in enumerate(sent.tokens):
             for wrd_idx, word in enumerate(token.words):
-                doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
                 doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-    file_to_store = os.path.join(exp_folder, f"pos_stanza_{name}")
+                if not pretagged:
+                    doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+    pretagging_info = 'gold-pos' if pretagged else 'silver-pos'
+    file_to_store = os.path.join(exp_folder, f"lemma_{pretagging_info}_stanza_{name}")
     CoNLL.write_doc2conll(doc_processed, file_to_store)
-    logger.debug("See results of morphological tagging in %s", file_to_store)
-    file_to_edit = os.path.join(exp_folder, f"pos_gold_{name}")
+    logger.debug("See results of lemmatisation in %s", file_to_store)
+    file_to_edit = os.path.join(exp_folder, f"lemma_{pretagging_info}_gold_{name}")
     CoNLL.write_doc2conll(doc_processed, file_to_edit)
-    logger.debug("Edit results of morphological tagging in %s", file_to_edit)
+    logger.debug("Edit results of lemmatisation in %s", file_to_edit)
