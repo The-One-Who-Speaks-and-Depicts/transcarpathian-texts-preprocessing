@@ -26,17 +26,18 @@ def set_logger(folder: str):
 def perform_initial_check_config(config: any) -> None:
     if not bool(config):
         raise ValueError("Config is not set")
-    if not bool(config["folder_name"]):
-        raise ValueError("No folder for the experiment results")
-    create_and_set_storage_directory(config["folder_name"])
-
+    if not bool(config["exp_name"]):
+        raise ValueError("No folder for the experiment results")    
 
 def main():
     with open(os.path.join(os.getcwd(), 'config.yaml'), 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
+    # TODO: add alternative checks if .env does not exist
     # TODO: set separate path to dir with exps and hide it in .env, only each exp dir should be in .yaml
-    exp_dir = os.path.join(os.getcwd(), config["folder_name"])
+    experiments_storage = config["exp_dir"] if "exp_dir" in config.keys() and os.path.exists(config["exp_dir"]) else os.getcwd()
+    exp_dir = os.path.join(experiments_storage, config["exp_name"])
     perform_initial_check_config(config)
+    create_and_set_storage_directory(exp_dir)
     if not bool(config["tagging_settings"]):
         raise ValueError("No settings for tagging")
     logger = set_logger(exp_dir)

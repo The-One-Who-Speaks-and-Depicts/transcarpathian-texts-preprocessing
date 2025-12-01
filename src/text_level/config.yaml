@@ -1,6 +1,6 @@
-# TODO: add alternative checks
+
 exp_dir: not_set
-folder_name: exp_1
+exp_name: exp_1
 phase: eval
 stage: pos
 tagging_settings:
