@@ -57,10 +57,17 @@ def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk
     logger.debug("Edit results of lemmatisation in %s", file_to_edit)
 
 
-def longest_common_substring_indices(str1, str2):
-    """Вяртае індэксы найдоўжага агульнага падрадка ў форме:
-    ((start1, end1), (start2, end2))
-    дзе end1 і end2 - індэксы ПАСЛЯ апошняга сімвала
+def get_lcss_indices(str1: str, str2: str) -> tuple[tuple[int, int]]:
+    """
+    Takes two strings and returns a tuple with indices for 
+    slicing their longest common substring
+    from them
+
+    Arguments:
+        str1, str2 (str): string to compare
+    Returns:
+        tuple[tuple[int, int]]: indices of the longest common substring
+        in both of the compared strings
     """
     m, n = len(str1), len(str2)
     
@@ -68,23 +75,35 @@ def longest_common_substring_indices(str1, str2):
     dp = [[0] * (n + 1) for _ in range(m + 1)]
     
     max_length = 0
-    end_pos1 = 0  # end пазіцыя ў str1 (індыкс ПАСЛЯ апошняга сімвала)
-    end_pos2 = 0  # end пазіцыя ў str2
+    end_pos1 = 0
+    end_pos2 = 0
     
+    # Знаходзім найдоўжы агульны падрадак
     for i in range(1, m + 1):
         for j in range(1, n + 1):
             if str1[i-1] == str2[j-1]:
                 dp[i][j] = dp[i-1][j-1] + 1
                 if dp[i][j] > max_length:
                     max_length = dp[i][j]
-                    end_pos1 = i  # i - гэта пазіцыя ў str1 (з 1)
-                    end_pos2 = j  # j - гэта пазіцыя ў str2 (з 1)
+                    end_pos1 = i
+                    end_pos2 = j
     
+    # Праверка на адсутнасць супадзенняў
     if max_length == 0:
         return ((-1, -1), (-1, -1))
     
     # Вылічым пачатковыя пазіцыі
-    start1 = end_pos1 - max_length  # індыкс першага сімвала ў str1
-    start2 = end_pos2 - max_length  # індыкс першага сімвала ў str2
+    start1 = end_pos1 - max_length
+    start2 = end_pos2 - max_length
+    
+    # Праверка правіла для падрадкаў даўжынёй 1
+    if max_length == 1:
+        # Праверка: ці з'яўляецца гэты сімвал першым у абодвух радках?
+        is_first_in_str1 = (start1 == 0)
+        is_first_in_str2 = (start2 == 0)
+        
+        # Правіла: калі НЕ (першы ў абодвух), то ігнаруем
+        if not (is_first_in_str1 and is_first_in_str2):
+            return ((-1, -1), (-1, -1))
     
     return ((start1, end_pos1), (start2, end_pos2))
