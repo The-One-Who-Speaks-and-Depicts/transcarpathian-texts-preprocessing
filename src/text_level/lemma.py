@@ -145,8 +145,8 @@ def assign_lemma_rapidity(pred: stanza.Document, gold: stanza.Document) -> stanz
         for token_idx, token in enumerate(sent.tokens):
             for word_idx, word in enumerate(token.words):
                 gold_word = gold.sentences[sent_idx].tokens[token_idx].words[word_idx]
-                rapidity_rate = show_lemmatiser_error_spots(word, gold_word)
-                rate_param = f'LemmaErrorSpots={rapidity_rate}|TaggedLemma={word}'
+                rapidity_rate = show_lemmatiser_error_spots(word.lemma, gold_word.lemma)
+                rate_param = f'LemmaErrorSpots={rapidity_rate}|TaggedLemma={word.lemma}'
                 if gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc == None:
                     gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc = rate_param
                 else:
@@ -175,34 +175,34 @@ def evaluate_lemma(gold_file_path: str, pred_file_path: str, train_result: float
     errata_with_correct_pos = [i for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
     errata_with_incorrect_pos = [i for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
     all_errata = errata_with_correct_pos + errata_with_incorrect_pos
-    accuracy_score = len(all_errata)/len(gold_lemma) * 100
+    accuracy_score = (len(gold_lemma) - len(all_errata))/len(gold_lemma) * 100
     logger.info("Accuracy score is %s%%", accuracy_score)
     if (train_result and train_result >= 0):
-        logger.info('PoS robustness:  %.2f', robustness_score(train_result, accuracy_score))
+        logger.info('Lemma robustness:  %.2f', robustness_score(train_result, accuracy_score))
     if (len(all_errata) > 0):
-        correct_pos_errata_share = errata_with_correct_pos/all_errata * 100
-        logger.info("Share of errata, when pos is not correct, is %s%%", correct_pos_errata_share)
-        incorrect_pos_errata_share = errata_with_incorrect_pos/all_errata * 100
-        logger.info("Share of errata, when pos is correct, is %s%%", incorrect_pos_errata_share)
+        correct_pos_errata_share = len(errata_with_correct_pos)/len(all_errata) * 100
+        logger.info("Share of errata, when pos is correct, is %s%%", correct_pos_errata_share)
+        incorrect_pos_errata_share = len(errata_with_incorrect_pos)/len(all_errata) * 100
+        logger.info("Share of errata, when pos is not correct, is %s%%", incorrect_pos_errata_share)
     #===============================OVERALL LEVENSHTEIN===============================================================
     levenshtein_with_correct_pos = [lev(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
-    av_leveshtein_with_correct_pos = 0 if len(levenshtein_with_correct_pos) == 0 else sum(levenshtein_with_correct_pos)/len(levenshtein_with_correct_pos)
+    av_leveshtein_with_correct_pos = "-1 (no examples found)" if len(levenshtein_with_correct_pos) == 0 else sum(levenshtein_with_correct_pos)/len(levenshtein_with_correct_pos)
     logger.info("Average Levenshtein distance, when pos is correct, is %s", av_leveshtein_with_correct_pos)
     levenshtein_with_incorrect_pos = [lev(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
-    av_leveshtein_with_incorrect_pos = 0 if len(levenshtein_with_incorrect_pos) == 0 else sum(levenshtein_with_incorrect_pos)/len(levenshtein_with_incorrect_pos)
+    av_leveshtein_with_incorrect_pos = "-1 (no examples found)" if len(levenshtein_with_incorrect_pos) == 0 else sum(levenshtein_with_incorrect_pos)/len(levenshtein_with_incorrect_pos)
     logger.info("Average Levenshtein distance, when pos is incorrect, is %s", av_leveshtein_with_incorrect_pos)
     all_levs = levenshtein_with_correct_pos + levenshtein_with_incorrect_pos
-    av_levs = 0 if len(all_levs) == 0 else sum(all_levs)/len(all_levs)
+    av_levs = "-1 (no examples found)" if len(all_levs) == 0 else sum(all_levs)/len(all_levs)
     logger.info("Average Levenshtein distance is %s", av_levs)
     #===============================OVERALL JARO=======================================================================
     jw_with_correct_pos = [jw(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
-    av_jw_with_correct_pos = 0 if len(jw_with_correct_pos) == 0 else sum(jw_with_correct_pos)/len(jw_with_correct_pos)
+    av_jw_with_correct_pos = "-1 (no examples found)" if len(jw_with_correct_pos) == 0 else sum(jw_with_correct_pos)/len(jw_with_correct_pos)
     logger.info("Average Jaro-Winkler distance, when pos is correct, is %s", av_jw_with_correct_pos)
     jw_with_incorrect_pos = [jw(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
-    av_jw_with_incorrect_pos = 0 if len(jw_with_incorrect_pos) == 0 else sum(jw_with_incorrect_pos)/len(jw_with_incorrect_pos)
+    av_jw_with_incorrect_pos = "-1 (no examples found)" if len(jw_with_incorrect_pos) == 0 else sum(jw_with_incorrect_pos)/len(jw_with_incorrect_pos)
     logger.info("Average Jaro-Winkler distance, when pos is incorrect, is %s", av_jw_with_incorrect_pos)
     all_jws = jw_with_correct_pos + jw_with_incorrect_pos
-    all_jws = 0 if len(all_jws) == 0 else sum(all_jws)/len(all_jws)
+    all_jws = "-1 (no examples found)" if len(all_jws) == 0 else sum(all_jws)/len(all_jws)
     logger.info("Average Jato-Winkler distance is %s", all_jws)
     #======================================SCORING BY POS==============================================================
     for pos in labels:
@@ -212,33 +212,33 @@ def evaluate_lemma(gold_file_path: str, pred_file_path: str, train_result: float
         errata_with_correct_pos = [i for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
         errata_with_incorrect_pos = [i for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
         all_errata = errata_with_correct_pos + errata_with_incorrect_pos
-        accuracy_score = len(all_errata)/len(gold_lemma) * 100
+        accuracy_score = (len(lemma_by_pos) - len(all_errata))/len(lemma_by_pos) * 100
         logger.info("Accuracy score for %s is %s%%", pos, accuracy_score)
         if (len(all_errata) > 0):
-            correct_pos_errata_share = errata_with_correct_pos/all_errata * 100
-            logger.info("Share of errata, when %s is not correct, is %s%%", pos, correct_pos_errata_share)
-            incorrect_pos_errata_share = errata_with_incorrect_pos/all_errata * 100
-            logger.info("Share of errata, when %s is correct, is %s%%", pos, incorrect_pos_errata_share)
+            correct_pos_errata_share = len(errata_with_correct_pos)/len(all_errata) * 100
+            logger.info("Share of errata, when %s is correct, is %s%%", pos, correct_pos_errata_share)
+            incorrect_pos_errata_share = len(errata_with_incorrect_pos)/len(all_errata) * 100
+            logger.info("Share of errata, when %s is not correct, is %s%%", pos, incorrect_pos_errata_share)
         #==========================================LEVENSHTEIN=========================================================
-        levenshtein_with_correct_pos = [lev(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
-        av_leveshtein_with_correct_pos = 0 if len(levenshtein_with_correct_pos) == 0 else sum(levenshtein_with_correct_pos)/len(levenshtein_with_correct_pos)
+        levenshtein_with_correct_pos = [lev(i[0][1], i[1][1]) for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
+        av_leveshtein_with_correct_pos = "-1 (no examples found)" if len(levenshtein_with_correct_pos) == 0 else sum(levenshtein_with_correct_pos)/len(levenshtein_with_correct_pos)
         logger.info("Average Levenshtein distance, when %s is correct, is %s", pos, av_leveshtein_with_correct_pos)
-        levenshtein_with_incorrect_pos = [lev(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
-        av_leveshtein_with_incorrect_pos = 0 if len(levenshtein_with_incorrect_pos) == 0 else sum(levenshtein_with_incorrect_pos)/len(levenshtein_with_incorrect_pos)
+        levenshtein_with_incorrect_pos = [lev(i[0][1], i[1][1]) for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
+        av_leveshtein_with_incorrect_pos = "-1 (no examples found)" if len(levenshtein_with_incorrect_pos) == 0 else sum(levenshtein_with_incorrect_pos)/len(levenshtein_with_incorrect_pos)
         logger.info("Average Levenshtein distance, when %s is incorrect, is %s", pos, av_leveshtein_with_incorrect_pos)
         all_levs = levenshtein_with_correct_pos + levenshtein_with_incorrect_pos
-        av_levs = 0 if len(all_levs) == 0 else sum(all_levs)/len(all_levs)
+        av_levs = "-1 (no examples found)" if len(all_levs) == 0 else sum(all_levs)/len(all_levs)
         logger.info("Average Levenshtein distance for %s is %s", pos, av_levs)
         #==========================================JARO=========================================================
-        jw_with_correct_pos = [jw(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
-        av_jw_with_correct_pos = 0 if len(jw_with_correct_pos) == 0 else sum(jw_with_correct_pos)/len(jw_with_correct_pos)
+        jw_with_correct_pos = [jw(i[0][1], i[1][1]) for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
+        av_jw_with_correct_pos = "-1 (no examples found)" if len(jw_with_correct_pos) == 0 else sum(jw_with_correct_pos)/len(jw_with_correct_pos)
         logger.info("Average Jaro-Winkler distance, when %s is correct, is %s", pos, av_jw_with_correct_pos)
-        jw_with_incorrect_pos = [jw(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
-        av_jw_with_incorrect_pos = 0 if len(jw_with_incorrect_pos) == 0 else sum(jw_with_incorrect_pos)/len(jw_with_incorrect_pos)
+        jw_with_incorrect_pos = [jw(i[0][1], i[1][1]) for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
+        av_jw_with_incorrect_pos = "-1 (no examples found)" if len(jw_with_incorrect_pos) == 0 else sum(jw_with_incorrect_pos)/len(jw_with_incorrect_pos)
         logger.info("Average Jaro-Winkler distance, when %s is incorrect, is %s", pos, av_jw_with_incorrect_pos)
         all_jws = jw_with_correct_pos + jw_with_incorrect_pos
-        all_jws = 0 if len(all_jws) == 0 else sum(all_jws)/len(all_jws)
-        logger.info("Average Jato-Winkler distance for %s is %s", pos, all_jws)
+        all_jws = "-1 (no examples found)" if len(all_jws) == 0 else sum(all_jws)/len(all_jws)
+        logger.info("Average Jaro-Winkler distance for %s is %s", pos, all_jws)
     #==============================================STORE HEAT===================================================
     gold_with_rapidity = assign_lemma_rapidity(pred, gold)
     name = ntpath.basename(gold_file_path)
