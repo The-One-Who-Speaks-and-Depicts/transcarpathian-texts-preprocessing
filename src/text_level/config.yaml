@@ -9,6 +9,7 @@ tagging_settings:
 evaluation_settings:
   pred_file: not_set
   gold_file: not_set
+  # add split by type of tagging
   train_result: 97.52
   train_ufeats: 93.11
 

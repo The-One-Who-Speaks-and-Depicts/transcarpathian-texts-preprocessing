@@ -10,6 +10,7 @@ from corpus_distance.pipeline import create_and_set_storage_directory
 
 from pos import pos_tag_with_stanza, eval_pos
 from lemma import lemmatise_with_stanza, evaluate_lemma
+from depparse import depparse_with_stanza
 
 def set_logger(folder: str):
     logger = logging.getLogger('preprocessor')
@@ -95,6 +96,17 @@ def main(args):
                         logger.warning("Train result not supplied, setting to default value")
                         settings["train_result"] = -1
                     evaluate_lemma(settings["gold_file"], settings["pred_file"], settings["train_result"], exp_dir)               
+        case "depparse":
+            match phase:
+                case "pred":
+                    if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
+                        raise ValueError("Input file does not exist")
+                    if not "pretagged" in settings.keys():
+                        logger.warning("Information on tagging not supplied, performing the whole pipeline")
+                        settings["pretagged"] = False
+                    depparse_with_stanza(settings["input_file"], exp_dir, pretagged=settings["pretagged"])
+                case "eval":
+                    logger.critical("Phase %s for stage %s not implemented yet", phase, config["stage"])
         case _:
             logger.error("Use one of the following:" +
                          "pos for joined part-of-speech and morphological tagging," +
