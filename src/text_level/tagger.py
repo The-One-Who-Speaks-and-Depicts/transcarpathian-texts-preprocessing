@@ -1,5 +1,6 @@
 import os
 import logging
+import argparse
 
 import yaml
 
@@ -29,8 +30,9 @@ def perform_initial_check_config(config: any) -> None:
     if not bool(config["exp_name"]):
         raise ValueError("No folder for the experiment results")    
 
-def main():
-    with open(os.path.join(os.getcwd(), 'config.yaml'), 'r', encoding='utf-8') as f:
+def main(args):
+    config_path = args.config if os.path.exists(args.config) else os.path.join(os.getcwd(), 'config.yaml')
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     # TODO: add alternative checks if .env does not exist
     # TODO: set separate path to dir with exps and hide it in .env, only each exp dir should be in .yaml
@@ -109,4 +111,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', '-c', help='Path to config.yaml file')
+    args = parser.parse_args()
+    main(args)
