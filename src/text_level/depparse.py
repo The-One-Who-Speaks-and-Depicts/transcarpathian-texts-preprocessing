@@ -58,3 +58,23 @@ def depparse_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk'
     file_to_edit = os.path.join(exp_folder, f"depparse_{pretagging_info}_gold_{name}")
     CoNLL.write_doc2conll(doc_processed, file_to_edit)
     logger.debug("Edit results of dependency parsing in %s", file_to_edit)
+
+
+# def calculate_las_uas(gold_heads, gold_labels, pred_heads, pred_labels):
+#     """Calculate LAS and UAS scores"""
+#     total = len(gold_heads)
+#     uas_correct = sum(1 for g, p in zip(gold_heads, pred_heads) if g == p)
+#     las_correct = sum(1 for g_h, g_l, p_h, p_l in 
+#                      zip(gold_heads, gold_labels, pred_heads, pred_labels) 
+#                      if g_h == p_h and g_l == p_l)
+    
+#     uas = uas_correct / total if total > 0 else 0
+#     las = las_correct / total if total > 0 else 0
+    
+#     return uas, las
+
+# Example usage
+
+
+# def evaluate_depparse():
+#     uas, las = calculate_las_uas(gold_heads, gold_labels, pred_heads, pred_labels)
