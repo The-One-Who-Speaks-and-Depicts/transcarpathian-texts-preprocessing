@@ -11,11 +11,12 @@ from corpus_distance.pipeline import create_and_set_storage_directory
 from pos import pos_tag_with_stanza, eval_pos
 from lemma import lemmatise_with_stanza, evaluate_lemma
 from depparse import depparse_with_stanza, evaluate_depparse
+from topic_modelling import perform_topic_modelling
 
 def set_logger(folder: str):
     logger = logging.getLogger('preprocessor')
     # TODO: logger level in config
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     now = datetime.now()
     date_time = now.strftime("%m-%d-%Y_%H-%M-%S")
     log_handler = logging.FileHandler(filename=os.path.join(folder, f'preprocessor{date_time}.log'), encoding='utf-8')
@@ -117,6 +118,14 @@ def main(args):
                         logger.warning("Train ufeats accuracy not supplied, setting to default value")
                         settings["train_ufeats"] = -1
                     evaluate_depparse(settings["gold_file"], settings["pred_file"], gold_uas= settings["train_result"], gold_las=settings["train_ufeats"])
+        case "topic":
+            match phase:
+                case "pred":
+                    if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
+                        raise ValueError("Input file does not exist")
+                    perform_topic_modelling(settings["input_file"], exp_dir)
+                case "eval":
+                    logger.critical("No %s phase for stage %s", phase, config["stage"])
         case _:
             logger.error("Use one of the following:" +
                          "pos for joined part-of-speech and morphological tagging," +
