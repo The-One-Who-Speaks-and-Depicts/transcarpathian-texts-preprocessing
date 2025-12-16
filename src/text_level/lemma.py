@@ -16,7 +16,6 @@ from pos import collect_labels, robustness_score
 logger = logging.getLogger('preprocessor')
 
 def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk', pretagged: bool = True):
-    logger.debug("%s is called with arguments %s", input_file_path, locals())
     name = ntpath.basename(input_file_path)
     stanza.download(lang)
     doc = CoNLL.conll2doc(input_file_path)
@@ -47,6 +46,7 @@ def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk
             tokenize_pretokenized=True
             )
     logger.debug("Lemmatisation tagging pipeline prepared, settings: %s", nlp)
+    logger.debug("Called with arguments %s", locals())
     doc_processed = nlp(doc_for_procesing)
     for sent_idx, sent in enumerate(doc_processed.sentences):
         for tkn_idx, token in enumerate(sent.tokens):
@@ -157,6 +157,7 @@ def assign_lemma_rapidity(pred: stanza.Document, gold: stanza.Document) -> stanz
 def evaluate_lemma(gold_file_path: str, pred_file_path: str, train_result: float, exp_folder: str) -> None:
     # TODO: the evaluation phase is mostly rehashing of the same code, I really dislike that
     logger.info("Lemma: starting comparison between %s and %s", gold_file_path, pred_file_path)
+    logger.debug("Called with arguments %s", locals())
     gold = CoNLL.conll2doc(gold_file_path)
     labels = collect_labels(gold)["pos"]
     logger.info("PoS labels are %s", labels)

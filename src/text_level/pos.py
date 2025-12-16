@@ -15,7 +15,6 @@ from numpy.linalg import norm
 logger = logging.getLogger('preprocessor')
 
 def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk') -> None:
-    logger.debug("%s is called with arguments %s", input_file_path, locals())
     name = ntpath.basename(input_file_path)
     stanza.download(lang)
     doc = CoNLL.conll2doc(input_file_path)
@@ -32,6 +31,7 @@ def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk')
     logger.debug("%s loaded", input_file_path)
     nlp = stanza.Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
     logger.debug("Part-of-speech tagging pipeline prepared")
+    logger.debug("Called with arguments %s", locals())
     doc_processed = nlp(doc_for_procesing)
     for sent_idx, sent in enumerate(doc_processed.sentences):
         for tkn_idx, token in enumerate(sent.tokens):
@@ -47,15 +47,17 @@ def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk')
 
 
 def collect_labels(doc: stanza.Document) -> dict:
-    result = {'pos': [], 'feats': ['_']}    
+    result = {'pos': [], 'feats': ['_'], 'deprel': ['_']}    
     for sent in doc.sentences:
         for token in sent.tokens:
             for word in token.words:
                 result['pos'].append(word.upos)
                 if word.feats:
                     result['feats'].extend([i.split('=')[0] for i in word.feats.split('|') if i and i.strip()])
+                result['deprel'].append(word.deprel)
     result['pos'] = list(set(result['pos']))
     result['feats'] = list(set(result['feats']))
+    result['deprel'] = list(set(result['deprel']))
     return result
 
 def score_for_single_pos(pred: list, true: list, label: str) -> None:
@@ -191,6 +193,7 @@ def assign_rapidity_rate(pred: stanza.Document, gold: stanza.Document) -> stanza
 
 def eval_pos(gold_file_path: str, pred_file_path: str, train_result: float, train_ufeats: float, exp_folder: str) -> None:
     logger.info("POS: starting comparison between %s and %s", gold_file_path, pred_file_path)
+    logger.debug("Called with arguments %s", locals())
     gold = CoNLL.conll2doc(gold_file_path)
     labels = collect_labels(gold)
     logger.info("PoS and morphological labels are %s", labels)

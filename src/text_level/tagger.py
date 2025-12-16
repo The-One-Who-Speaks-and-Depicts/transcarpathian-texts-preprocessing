@@ -10,7 +10,7 @@ from corpus_distance.pipeline import create_and_set_storage_directory
 
 from pos import pos_tag_with_stanza, eval_pos
 from lemma import lemmatise_with_stanza, evaluate_lemma
-from depparse import depparse_with_stanza
+from depparse import depparse_with_stanza, evaluate_depparse
 
 def set_logger(folder: str):
     logger = logging.getLogger('preprocessor')
@@ -106,7 +106,17 @@ def main(args):
                         settings["pretagged"] = False
                     depparse_with_stanza(settings["input_file"], exp_dir, pretagged=settings["pretagged"])
                 case "eval":
-                    logger.critical("Phase %s for stage %s not implemented yet", phase, config["stage"])
+                    if not bool(settings["pred_file"]) or not os.path.exists(settings["pred_file"]):
+                        raise ValueError("Input file does not exist")
+                    if not bool(settings["gold_file"]) or not os.path.exists(settings["gold_file"]):
+                        raise ValueError("Input file does not exist")
+                    if not "train_result" in settings.keys() or not bool(settings["train_result"]) or settings["train_result"] == "not_set" or type(settings["train_result"]) != float or settings["train_result"] < 0:
+                        logger.warning("Train result not supplied, setting to default value")
+                        settings["train_result"] = -1
+                    if not "train_ufeats" in settings.keys() or not bool(settings["train_ufeats"]) or settings["train_ufeats"] == "not_set" or type(settings["train_ufeats"]) != float or settings["train_ufeats"] < 0:
+                        logger.warning("Train ufeats accuracy not supplied, setting to default value")
+                        settings["train_ufeats"] = -1
+                    evaluate_depparse(settings["gold_file"], settings["pred_file"], gold_uas= settings["train_result"], gold_las=settings["train_ufeats"])
         case _:
             logger.error("Use one of the following:" +
                          "pos for joined part-of-speech and morphological tagging," +
