@@ -3,6 +3,7 @@ exp_dir: not_set
 exp_name: exp_1
 phase: eval
 stage: pos
+model: stanza
 tagging_settings:
   input_file: not_set
   pretagged: no
