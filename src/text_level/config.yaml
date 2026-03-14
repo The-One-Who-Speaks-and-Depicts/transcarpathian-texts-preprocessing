@@ -1,16 +1,62 @@
 
-exp_dir: not_set
-exp_name: exp_1
+exp_dir: "/home/ilia/coding/Research/PhD/transcarpathian-gold-data/exp_results"
+exp_name: exp_pos_ParlaMint
 phase: eval
 stage: pos
 model: stanza
+llm_settings:
+  name: gemma
+  seed: 1590
+  temperature: 0.0
+  max_tokens: 4096
+  prompt:
+    system_characteristics: >
+      You are an expert annotator with the knowledge of all the Slavic languages and especially Ukrainian (you had more experience with the western variant than with the central and the eastern). Your task is to perform
+    task:
+      pos: >
+        part-of-speech tagging and morphological tagging
+      lemmatisation: >
+        part-of-speech tagging, morphological tagging and lemmatisation        
+      dependency: >
+        morphosyntactic tagging (part-of-speech tagging and morphological tagging, lemmatisation, dependency parsing)
+    general_info: >
+      of Lemko (a dialect in the Transcarpathian area of Slovakia, which shares a lot of features with modern standard Ukrainian). Your input is a pre-tokenised sentence Your output is the same sentence, but with morphosyntactic tags, in dictionary format, compatible with Stanza data model. Please, output only the tagged sentence, do not provide any additional comments.  
+    gold_data_info: >
+      During the reasoning phase, if your task is lemmatisation, and the input contains part-of-speech tagging and morphological tagging, use it as hint to lemmatise better. If the input does not contain part-of-speech tagging and morphological tagging, perform part-of-speech and morphological tagging first, and afterwards and use its results to better perform lemmatisation. When you perform dependency parsing, check, whether the input contains part-of-speech tagging and morphological tagging and lemmatisation. If the input contains part-of-speech tagging and morphological tagging and lemmatisation, use it as a hint to perform better dependency parsing. If the input does not contain part-of-speech tagging and morphological tagging, perform part-of-speech and morphological tagging first, and afterwards and use its results to better perform lemmatisation and dependency parsing.
+    example_input: >
+      Example input:
+        Рішення не прийнято .   
+    example_output: >
+      Example output:
+        {
+          "id": "1",
+          "upos": "NOUN,
+          "feats": "Animacy=Inan|Case=Acc|Gender=Neut|Number=Sing",
+        },
+        {
+          "id": "2",
+          "upos": "PART",
+          "feats": "Polarity=Neg",
+        },
+        {
+          "id": "3",
+          "upos": "VERB",
+          "feats": "Aspect=Perf|Mood=Ind|Person=0|VerbForm=Fin",
+        },
+        {
+          "id": "4",
+          "upos": "PUNCT",
+          "feats": "_",
+        },
+    query: >
+      Tag the following sentence:
 tagging_settings:
-  input_file: not_set
-  pretagged: no
+  input_file: ""
+  pretagged: True
 evaluation_settings:
-  pred_file: not_set
-  gold_file: not_set
+  pred_file: ""
+  gold_file: ""
   # add split by type of tagging
   train_result: 97.52
-  train_ufeats: 93.11
+  train_ufeats: 92.07
 

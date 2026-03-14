@@ -12,9 +12,12 @@ import os
 import numpy as np
 from numpy.linalg import norm
 
+from openai import OpenAI
+
 logger = logging.getLogger('preprocessor')
 
 def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk') -> None:
+    logger.debug("Called with arguments %s", locals())
     name = ntpath.basename(input_file_path)
     stanza.download(lang)
     doc = CoNLL.conll2doc(input_file_path)
@@ -22,16 +25,16 @@ def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk')
     for sent in doc_for_procesing.sentences:
         for token in sent.tokens:
             for word in token.words:
-                misc_keys = word.misc.split('|')
-                for key in misc_keys:
-                    if 'wf' in key:
-                        new_form = re.sub('\"', '', key)
-                        new_form = re.sub('wf=', '', new_form)
-                        word.text = new_form
+                if word.misc is not None:
+                    misc_keys = word.misc.split('|')
+                    for key in misc_keys:
+                        if 'wf' in key:
+                            new_form = re.sub('\"', '', key)
+                            new_form = re.sub('wf=', '', new_form)
+                            word.text = new_form
     logger.debug("%s loaded", input_file_path)
     nlp = stanza.Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
     logger.debug("Part-of-speech tagging pipeline prepared")
-    logger.debug("Called with arguments %s", locals())
     doc_processed = nlp(doc_for_procesing)
     for sent_idx, sent in enumerate(doc_processed.sentences):
         for tkn_idx, token in enumerate(sent.tokens):
@@ -44,6 +47,94 @@ def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk')
     file_to_edit = os.path.join(exp_folder, f"pos_gold_{name}")
     CoNLL.write_doc2conll(doc_processed, file_to_edit)
     logger.info("Edit results of morphological tagging in %s", file_to_edit)
+
+
+def set_prompt(config: dict, task: str) -> dict:
+    prompt = {
+        "system": "",
+        "query": "Tag the sentence below"
+    }
+    if not bool(config['prompt']):
+        return prompt
+    prompt_config = config['prompt']
+    if bool(prompt_config['system_characteristics']):
+        prompt['system'] = prompt['system'] + prompt_config['system_characteristics']
+    if bool(prompt_config['task']) and bool(prompt_config['task'][task]):
+        prompt['system'] = prompt['system'] + prompt_config['task'][task]
+    if bool(prompt_config['general_info']):
+        prompt['system'] = prompt['system'] + prompt_config['general_info']
+    if bool(prompt_config['gold_data_info']):
+        prompt['system'] = prompt['system'] + prompt_config['gold_data_info']
+    if bool(prompt_config['example_input']):
+        prompt['system'] = prompt['system'] + prompt_config['example_input']
+    if bool(prompt_config['example_output']):
+        prompt['system'] = prompt['system'] + prompt_config['example_output']
+    if bool(prompt_config['query']):
+        prompt["query"] = prompt_config['query']
+    return prompt
+
+
+
+    
+
+
+def pos_tag_with_llm(input_file_path: str, llm_config: dict, exp_folder: str) -> None:
+    name = ntpath.basename(input_file_path)
+    doc = CoNLL.conll2doc(input_file_path)
+    doc_for_procesing = deepcopy(doc)
+    for sent in doc_for_procesing.sentences:
+        for token in sent.tokens:
+            for word in token.words:
+                if word.misc is not None:
+                    misc_keys = word.misc.split('|')
+                    for key in misc_keys:
+                        if 'wf' in key:
+                            new_form = re.sub('\"', '', key)
+                            new_form = re.sub('wf=', '', new_form)
+                            word.text = new_form
+    logger.debug("%s loaded", input_file_path)
+    client = OpenAI(
+        base_url="http://127.0.0.1:1234/v1",
+        api_key="not-needed"
+    )
+    logger.info("LLM client initialised")
+    prompt = set_prompt(llm_config, 'pos')
+    logger.info("Prompt: %s", prompt)
+    for sent in doc_for_procesing.sentences:
+        tokenised_sent = ' '.join([word.text for token in sent.tokens for word in token.words])
+        completion = client.chat.completions.create(
+            model=llm_config["name"] if llm_config["name"] else "local",
+            messages=[
+                {
+                    "role": "system", "content": prompt['system']},
+                {
+                    "role": "user", "content": prompt['query'] + tokenised_sent
+                }
+            ],
+            temperature=llm_config['temperature'] if llm_config['temperature'] else 0,
+            seed=llm_config['seed'] if llm_config['seed'] else 0,
+            max_tokens=llm_config['max_tokens'] if llm_config['max_tokens'] else 0,
+        )
+        logger.info(completion.choices[0].message.content)  
+
+
+
+
+    # nlp = stanza.Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
+    # logger.debug("Part-of-speech tagging pipeline prepared")
+    # logger.debug("Called with arguments %s", locals())
+    # doc_processed = nlp(doc_for_procesing)
+    # for sent_idx, sent in enumerate(doc_processed.sentences):
+    #     for tkn_idx, token in enumerate(sent.tokens):
+    #         for wrd_idx, word in enumerate(token.words):
+    #             doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+    #             doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+    # file_to_store = os.path.join(exp_folder, f"pos_stanza_{name}")
+    # CoNLL.write_doc2conll(doc_processed, file_to_store)
+    # logger.info("See results of morphological tagging in %s", file_to_store)
+    # file_to_edit = os.path.join(exp_folder, f"pos_gold_{name}")
+    # CoNLL.write_doc2conll(doc_processed, file_to_edit)
+    # logger.info("Edit results of morphological tagging in %s", file_to_edit)
 
 
 def collect_labels(doc: stanza.Document) -> dict:

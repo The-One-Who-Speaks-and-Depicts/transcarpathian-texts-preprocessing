@@ -8,7 +8,7 @@ from datetime import datetime
 
 from corpus_distance.pipeline import create_and_set_storage_directory
 
-from pos import pos_tag_with_stanza, eval_pos
+from pos import pos_tag_with_stanza, pos_tag_with_llm, eval_pos
 from lemma import lemmatise_with_stanza, evaluate_lemma
 from depparse import depparse_with_stanza, evaluate_depparse
 from topic_modelling import perform_topic_modelling
@@ -30,7 +30,8 @@ def perform_initial_check_config(config: any) -> None:
     if not bool(config):
         raise ValueError("Config is not set")
     if not bool(config["exp_name"]):
-        raise ValueError("No folder for the experiment results")    
+        raise ValueError("No folder for the experiment results")
+
 
 def main(args):
     config_path = args.config if os.path.exists(args.config) else os.path.join(os.getcwd(), 'config.yaml')
@@ -56,7 +57,12 @@ def main(args):
             "Use either pred to generate file with automatic tagging" +
             ", or eval to contrast automatic tagging with gold standard"
             )
-        raise ValueError("Phase is set incorrectly, see log for details")    
+        raise ValueError("Phase is set incorrectly, see log for details")
+    model = config["model"]
+    if model not in ["llm", "stanza"]:
+        logger.error("Use either llm to use your local LLM" +
+                     ", or stanza to use Stanza, trained on Ukrainian")
+        raise ValueError("Model is set incorrectly, see log for details")
     settings = config["tagging_settings"] if phase == "pred" else config["evaluation_settings"]    
     if not bool(config["stage"]):
         raise ValueError("Stage parameter is not set")
@@ -66,7 +72,10 @@ def main(args):
                 case "pred":
                     if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
                         raise ValueError("Input file does not exist")
-                    pos_tag_with_stanza(settings["input_file"], exp_dir)
+                    if model == "stanza":
+                        pos_tag_with_stanza(settings["input_file"], exp_dir)
+                    if model == "llm":
+                        pos_tag_with_llm(settings["input_file"], config["llm_settings"], exp_dir)
                 case "eval":
                     if not bool(settings["pred_file"]) or not os.path.exists(settings["pred_file"]):
                         raise ValueError("Input file does not exist")
