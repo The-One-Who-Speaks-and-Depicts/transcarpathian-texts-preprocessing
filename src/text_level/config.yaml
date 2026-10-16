@@ -1,16 +1,22 @@
 
 exp_dir: not_set
-exp_name: exp_1
-phase: eval
-stage: pos
-model: stanza
+exp_name: not_set
+phase: not_set
+stage: not_set
+model: not_set
 tagging_settings:
   input_file: not_set
-  pretagged: no
+  pretagged: not_set
+  llm_params:
+    api: not_set
+    base_url: not_set
+    model: not_set
+    seed: not_set
+    temperature: not_set
+    retries: not_set
+    prompt: not_set
 evaluation_settings:
   pred_file: not_set
   gold_file: not_set
-  # add split by type of tagging
-  train_result: 97.52
-  train_ufeats: 93.11
-
+  train_result: not_set
+  train_ufeats: not_set

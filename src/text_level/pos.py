@@ -11,6 +11,14 @@ import os
 
 import numpy as np
 from numpy.linalg import norm
+import json
+
+
+from openai import OpenAI
+
+from google.genai import Client, types
+
+from utils.utils import ClientParams
 
 logger = logging.getLogger('preprocessor')
 
@@ -45,6 +53,115 @@ def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk')
     CoNLL.write_doc2conll(doc_processed, file_to_edit)
     logger.info("Edit results of morphological tagging in %s", file_to_edit)
 
+
+def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams()) -> None:
+    logger.debug("Called with arguments %s", locals())
+    name = ntpath.basename(input_file_path)
+    doc = CoNLL.conll2doc(input_file_path)
+    doc_for_processing = deepcopy(doc)
+    for sent in doc_for_processing.sentences:
+        for token in sent.tokens:
+            for word in token.words:
+                misc_keys = word.misc.split('|')
+                for key in misc_keys:
+                    if 'wf' in key:
+                        new_form = re.sub('\"', '', key)
+                        new_form = re.sub('wf=', '', new_form)
+                        word.text = new_form
+    logger.debug("%s loaded", input_file_path)
+    client = None
+    match params.api:
+        case "OpenAI":
+            client = OpenAI(
+                api_key=params.api_key,
+                base_url=params.base_url
+            )
+        case _:
+            raise ValueError(f"Incorrect API type, received {params.api}")
+    logger.debug("Part-of-speech tagging pipeline prepared")
+    for sent_idx, sent in enumerate(doc_for_processing.sentences):
+        sent_tokens = [w.text for w in sent.words]
+        sent_tokenised = ' '.join(sent_tokens)
+        words = []
+        prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + '\n' for w in sent.words]}\n")
+        retries = 0
+        while True:
+            match params.api:
+                case "OpenAI":
+                    try:
+                        ud_schema = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "ud_pos",
+                                "strict": True,
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        str(w.id): {
+                                        "type": "object",
+                                        "properties": {
+                                            "text": {"type": "string"},
+                                            "upos": {"type": "string"},
+                                            "feats": {"type": "string"}
+                                        },
+                                        "required": ["text", "upos", "feats"],
+                                        "additionalProperties":False,
+                                        } for w in sent.words
+                                    },
+                                    "required": [w.id for w in sent.words],
+                                    "additionalProperties": False,
+                                    "minItems": len(sent_tokens),
+                                    "maxItems": len(sent_tokens)
+                                },
+                            }
+                        }
+                        response = client.chat.completions.create(
+                            model=params.model,
+                            messages=[
+                                {"role": "system", "content": ""},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=params.temperature,
+                            seed=params.seed,
+                            response_format= ud_schema,
+                            stream=False
+                        )
+                        logger.info(f'Response: {response}')
+                        logger.info(f'Message: {response.choices[0].message.content}')
+                        # small models tend to incontrollably generate code blocks 
+                        # designations around the actual output
+                        cleared_content = re.sub(r'```(json)?\n?', '', response.choices[0].message.content)
+                        annotated = json.loads(cleared_content)
+                        if len(annotated) != len(sent.words):
+                            raise ValueError(
+                                f"Token count mismatch: expected {len(sent.words)} from  {sent_tokenised}, "
+                                f"received {len(annotated)}"
+                            )
+                        words = annotated
+                        break
+                    except ValueError as e:
+                        logger.error(f"Invalid LLM output, the error is {e}")
+                        retries = retries + 1
+                        if retries > params.retries:
+                            raise ValueError("Too many retries")
+                        prompt = f"The result of {sent_tokenised} processing was incorrect, there was an exception {e}. Please, re-perform the task, keeping the exception in mind. The task is {params.prompt.format(sent=sent_tokenised)}"
+                        continue
+
+        for tkn_idx, token in enumerate(sent.tokens):
+            for wrd_idx, word in enumerate(token.words):
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].upos = words[str(tkn_idx+1)]['upos']
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].feats = words[str(tkn_idx+1)]['feats'] if words[str(tkn_idx+1)]['feats'] and words[str(tkn_idx+1)]['feats'].strip() else '_'
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+    # models usually contain slash in their name ("google/gemma-3en-4b"),
+    # I replace it with underscore
+    model_name = re.sub(r'\/', '_', params.model)
+    file_to_store = os.path.join(exp_folder, f"pos_{model_name}_{name}")
+    CoNLL.write_doc2conll(doc_for_processing, file_to_store)
+    logger.info("See results of morphological tagging in %s", file_to_store)
+    file_to_edit = os.path.join(exp_folder, f"pos_gold_{name}")
+    CoNLL.write_doc2conll(doc_for_processing, file_to_edit)
+    logger.info("Edit results of morphological tagging in %s", file_to_edit)
 
 def collect_labels(doc: stanza.Document) -> dict:
     result = {'pos': [], 'feats': ['_'], 'deprel': ['_']}    
@@ -148,13 +265,13 @@ def score_for_single_morph_feature(pred: list, true: list, label: str) -> None:
     acc = correct/len(relevant_tokens)
     logger.info("Accuracy for %s is %.2f%s from %s tokens", label, acc*100, "%", len(relevant_tokens))
 
-def robustness_score(original_score: float, current_score: float):
-    ideal_vector = np.array([25, 0])
-    current_vector = np.array([25, current_score - original_score])
+def robustness_score(original_score: float, current_score: float, end: int):
+    ideal_vector = np.array([end, 0])
+    current_vector = np.array([end, current_score - original_score])
     cos_sim = np.dot(ideal_vector, current_vector) / (norm(ideal_vector) * norm(current_vector))
-    logger.debug('Sign-neutral cosine similarity is %.2f', cos_sim)
+    score_with_diff = original_score * (1 - cos_sim)
     robustness_coefficient = 1 if current_score >= original_score else -1
-    return cos_sim * robustness_coefficient
+    return score_with_diff * robustness_coefficient
 
 def score_rapidity_rate(pred: any, true: any) -> int:
     if pred.upos != true.upos:

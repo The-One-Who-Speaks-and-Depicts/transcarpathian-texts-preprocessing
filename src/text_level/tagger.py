@@ -1,38 +1,22 @@
 import os
-import logging
 import argparse
+from dotenv import load_dotenv
 
 import yaml
 
-from datetime import datetime
 
 from corpus_distance.pipeline import create_and_set_storage_directory
 
-from pos import pos_tag_with_stanza, eval_pos
+from utils.utils import perform_initial_check_config, set_logger, load_llm_params
+
+from pos import pos_tag_with_stanza, pos_tag_with_llm, eval_pos
 from lemma import lemmatise_with_stanza, evaluate_lemma
 from depparse import depparse_with_stanza, evaluate_depparse
-from topic_modelling import perform_topic_modelling
+from topic_modelling import perform_topic_modelling  
 
-def set_logger(folder: str):
-    logger = logging.getLogger('preprocessor')
-    # TODO: logger level in config
-    logger.setLevel(logging.DEBUG)
-    now = datetime.now()
-    date_time = now.strftime("%m-%d-%Y_%H-%M-%S")
-    log_handler = logging.FileHandler(filename=os.path.join(folder, f'preprocessor{date_time}.log'), encoding='utf-8')
-    log_formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s: %(message)s",
-                                datefmt='%Y-%m-%d %H:%M:%S')
-    log_handler.setFormatter(log_formatter)
-    logger.addHandler(log_handler)
-    return logger
-
-def perform_initial_check_config(config: any) -> None:
-    if not bool(config):
-        raise ValueError("Config is not set")
-    if not bool(config["exp_name"]):
-        raise ValueError("No folder for the experiment results")    
 
 def main(args):
+    load_dotenv()
     config_path = args.config if os.path.exists(args.config) else os.path.join(os.getcwd(), 'config.yaml')
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
@@ -60,13 +44,24 @@ def main(args):
     settings = config["tagging_settings"] if phase == "pred" else config["evaluation_settings"]    
     if not bool(config["stage"]):
         raise ValueError("Stage parameter is not set")
+    if not bool(config["model"]):
+        raise ValueError("Model parameter is not set")
     match config["stage"]:
         case "pos":
             match phase:
                 case "pred":
                     if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
                         raise ValueError("Input file does not exist")
-                    pos_tag_with_stanza(settings["input_file"], exp_dir)
+                    match config["model"]:
+                        case "stanza":
+                            pos_tag_with_stanza(settings["input_file"], exp_dir)
+                        case "llm":
+                            if not bool(settings["llm_params"]):
+                                raise ValueError("LLM parameters not given")
+                            llm_params = load_llm_params(settings["llm_params"])
+                            pos_tag_with_llm(settings["input_file"], exp_dir, llm_params)
+                        case _:
+                            raise ValueError(f"Incorrect model parameter, received {config["model"]}")
                 case "eval":
                     if not bool(settings["pred_file"]) or not os.path.exists(settings["pred_file"]):
                         raise ValueError("Input file does not exist")
