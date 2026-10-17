@@ -10,7 +10,7 @@ from corpus_distance.pipeline import create_and_set_storage_directory
 from utils.utils import perform_initial_check_config, set_logger, load_llm_params
 
 from pos import pos_tag_with_stanza, pos_tag_with_llm, eval_pos
-from lemma import lemmatise_with_stanza, evaluate_lemma
+from lemma import lemmatise_with_stanza, lemmatise_with_llm, evaluate_lemma
 from depparse import depparse_with_stanza, evaluate_depparse
 from topic_modelling import perform_topic_modelling  
 
@@ -82,7 +82,16 @@ def main(args):
                     if not "pretagged" in settings.keys():
                         logger.warning("Information on tagging not supplied, performing the whole pipeline")
                         settings["pretagged"] = False
-                    lemmatise_with_stanza(settings["input_file"], exp_dir, pretagged=settings["pretagged"])
+                    match config["model"]:
+                        case "stanza":
+                            lemmatise_with_stanza(settings["input_file"], exp_dir, pretagged=settings["pretagged"])
+                        case "llm":
+                            if not bool(settings["llm_params"]):
+                                raise ValueError("LLM parameters not given")
+                            llm_params = load_llm_params(settings["llm_params"])
+                            lemmatise_with_llm(settings["input_file"], exp_dir, llm_params, pretagged=settings["pretagged"])
+                        case _:
+                            raise ValueError(f"Incorrect model parameter, received {config["model"]}")
                 case "eval":
                     if not bool(settings["pred_file"]) or not os.path.exists(settings["pred_file"]):
                         raise ValueError("Input file does not exist")

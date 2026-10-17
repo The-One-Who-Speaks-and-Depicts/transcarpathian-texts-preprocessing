@@ -2,7 +2,6 @@
 
 Your task is to perform a morphological annotation in the Universal Dependecies framework for the following pre-tokenized sentence: {sent}
 
-
 # The idea
 
 Your task is to transform a sentence, like "Великий Липник ." into a list of objects of the following structure:
@@ -175,6 +174,4 @@ The next step in the pipeline is the immediate parsing of the result, so in case
 # Checks to perform after the input is generated
 
 1. The number of objects in the generated array vs. the number of tokens. These should be equal. Otherwise, amend and regenerate.
-
-# Examples
 
