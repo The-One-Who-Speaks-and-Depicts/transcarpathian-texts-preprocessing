@@ -1,23 +1,40 @@
 import logging
-
+import json
 import re
+
 import stanza
 from stanza.utils.conll import CoNLL
 import ntpath
 from copy import deepcopy
 import os
 
-from stanza.models.common.doc import Document, Sentence
+from stanza.models.common.doc import Document, Sentence, Word
 
-from pos import collect_labels, robustness_score
+from openai import OpenAI
+
 
 from zss import Node, simple_distance
+
+from pos import collect_labels, robustness_score
+from utils.utils import ClientParams
 
 
 
 logger = logging.getLogger('preprocessor')
 
 # TODO: technically, all tagging prediction schema are very similar and can be joined into a single one
+
+def preprocess_conllu_word_for_depparse(word: Word, pretagged: bool | str) -> str:
+    text = word.text
+    if not pretagged:
+        return text
+    upos = word.pos if word.pos is not None and word.pos.strip() else '_'
+    feats = word.feats if word.feats is not None and word.feats.strip() else '_'
+    lemma = word.lemma if word.lemma is not None and word.lemma.strip() else '_'
+    if pretagged == 'detokenised':
+        return ' '.join([upos, feats])
+    return ' '.join([text, lemma, upos, feats])
+
 
 def depparse_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk', pretagged: bool = True) -> None:
     logger.debug("Called with arguments %s", locals())
@@ -65,6 +82,157 @@ def depparse_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk'
     logger.debug("See results of dependency parsing in %s", file_to_store)
     file_to_edit = os.path.join(exp_folder, f"depparse_{pretagging_info}_gold_{name}")
     CoNLL.write_doc2conll(doc_processed, file_to_edit)
+    logger.debug("Edit results of dependency parsing in %s", file_to_edit)
+
+def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams(), pretagged: bool | str = True) -> None:
+    logger.debug("Called with arguments %s", locals())
+    name = ntpath.basename(input_file_path)
+    doc = CoNLL.conll2doc(input_file_path)
+    doc_for_processing = deepcopy(doc)
+    for sent in doc_for_processing.sentences:
+        for token in sent.tokens:
+            for word in token.words:
+                misc_keys = word.misc.split('|')
+                for key in misc_keys:
+                    if 'wf' in key:
+                        new_form = re.sub('\"', '', key)
+                        new_form = re.sub('wf=', '', new_form)
+                        word.text = new_form
+    logger.debug("%s loaded", input_file_path)
+    client = None
+    match params.api:
+        case "OpenAI":
+            client = OpenAI(
+                api_key=params.api_key,
+                base_url=params.base_url
+            )
+        case _:
+            raise ValueError(f"Incorrect API type, received {params.api}")
+    logger.debug("Dependency parsing pipeline prepared")
+    for sent_idx, sent in enumerate(doc_for_processing.sentences):
+        sent_tokens = [w.text for w in sent.words]
+        sent_tokenised = ' '.join(sent_tokens)
+        words = []
+        prompt = params.prompt.format(
+            sent=f"{sent_tokenised}\nTokens:\n{
+                '\n'.join(
+                    [' '.join(
+                        [
+                            str(w.id),
+                            ':',
+                            preprocess_conllu_word_for_depparse(w, pretagged)
+                        ]
+                         ) for w in sent.words]
+                    ) + '\n'
+                }"
+            )
+        logger.info("Prompt is assembled:\n %s", prompt)
+        retries = 0
+        while True:
+            match params.api:
+                case "OpenAI":
+                    try:
+                        ids = [w.id for w in sent.words]
+                        ids_with_root = [w.id for w in sent.words]
+                        ids_with_root.append(0)
+                        ud_schema = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "ud_deprel",
+                                "strict": True,
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        str(w.id): {
+                                        "type": "object",
+                                        "properties": {
+                                            "text": {
+                                                "type": "string",
+                                                "enum": [w.text],
+                                            },
+                                            "head": {
+                                                "type": "integer", 
+                                                "enum": [
+                                                    id for id in ids_with_root if id != w.id 
+                                                    ],
+                                            },
+                                            "deprel": {
+                                                "type": "string",
+                                                "pattern": (
+                                                    r"^(?:acl|advcl|advmod|amod|appos|aux|case|cc|"
+                                                    r"ccomp|clf|compound|conj|cop|csubj|dep|det|"
+                                                    r"discourse|dislocated|expl|fixed|flat|goeswith|"
+                                                    r"iobj|list|mark|nmod|nsubj|nummod|obj|obl|"
+                                                    r"orphan|parataxis|punct|reparandum|root|"
+                                                    r"vocative|xcomp)(?::[A-Za-z0-9_-]+)?$"
+                                                )
+                                            }
+                                        },
+                                        "required": ["text", "head", "deprel"],
+                                        "additionalProperties":False,
+                                        } for w in sent.words
+                                    },
+                                    "required": [str(id) for id in ids],
+                                    "additionalProperties": False,
+                                },
+                            }
+                        }
+                        response = client.chat.completions.create(
+                            model=params.model,
+                            messages=[
+                                {"role": "system", "content": ""},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=params.temperature,
+                            seed=params.seed,
+                            response_format= ud_schema,
+                            stream=False
+                        )
+                        logger.info(f'Response: {response}')
+                        logger.info(f'Message: {response.choices[0].message.content}')
+                        # small models tend to incontrollably generate code blocks 
+                        # designations around the actual output
+                        cleared_content = re.sub(r'```(json)?\n?', '', response.choices[0].message.content)
+                        annotated = json.loads(cleared_content)
+                        if len(annotated) != len(sent.words):
+                            raise ValueError(
+                                f"Token count mismatch: expected {len(sent.words)} from  {sent_tokenised}, "
+                                f"received {len(annotated)}"
+                            )
+                        words = annotated
+                        break
+                    except ValueError as e:
+                        logger.error(f"Invalid LLM output, the error is {e}")
+                        retries = retries + 1
+                        if retries > params.retries:
+                            raise ValueError("Too many retries")
+                        original_prompt = prompt
+                        prompt = f"Original prompt: {original_prompt}. Prompt processing was incorrect, there was an exception {e}. Please, re-perform the task, keeping the exception in mind."
+                        continue
+
+        for tkn_idx, token in enumerate(sent.tokens):
+            for wrd_idx, word in enumerate(token.words):
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].head = words[str(tkn_idx+1)]['head']
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].deprel = words[str(tkn_idx+1)]['deprel']
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+                if not pretagged:
+                    doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+    pretagging_info = None
+    match pretagged:
+        case 'detokenised':
+            pretagging_info = 'gold_detokenised'
+        case True:
+            pretagging_info = 'gold'
+        case _:
+            pretagging_info = 'silver'
+    # models usually contain slash in their name ("google/gemma-3en-4b"),
+    # I replace it with underscore
+    model_name = re.sub(r'\/', '_', params.model)
+    file_to_store = os.path.join(exp_folder, f"depparse_{pretagging_info}_{model_name}_{name}")
+    CoNLL.write_doc2conll(doc_for_processing, file_to_store)
+    logger.debug("See results of dependency parsing in %s", file_to_store)
+    file_to_edit = os.path.join(exp_folder, f"depparse_{pretagging_info}_gold_{name}")
+    CoNLL.write_doc2conll(doc_for_processing, file_to_edit)
     logger.debug("Edit results of dependency parsing in %s", file_to_edit)
 
 

@@ -163,7 +163,7 @@ def lemmatise_with_llm(input_file_path: str, exp_folder: str, params: ClientPara
 
         for tkn_idx, token in enumerate(sent.tokens):
             for wrd_idx, word in enumerate(token.words):
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].upos = words[str(tkn_idx+1)]['lemma']
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].lemma = words[str(tkn_idx+1)]['lemma']
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
                 if not pretagged:
                     doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
@@ -177,13 +177,6 @@ def lemmatise_with_llm(input_file_path: str, exp_folder: str, params: ClientPara
     file_to_edit = os.path.join(exp_folder, f"lemma_{pretagging_info}_gold_{name}")
     CoNLL.write_doc2conll(doc_for_processing, file_to_edit)
     logger.debug("Edit results of lemmatisation in %s", file_to_edit)
-    
-    file_to_store = os.path.join(exp_folder, f"pos_{model_name}_{name}")
-    CoNLL.write_doc2conll(doc_for_processing, file_to_store)
-    logger.info("See results of morphological tagging in %s", file_to_store)
-    file_to_edit = os.path.join(exp_folder, f"pos_gold_{name}")
-    CoNLL.write_doc2conll(doc_for_processing, file_to_edit)
-    logger.info("Edit results of morphological tagging in %s", file_to_edit)
 
 
 def get_lcss_indices(
