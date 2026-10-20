@@ -1,4 +1,7 @@
+from logging import getLogger, StreamHandler, Formatter
 import os
+from os.path import isfile
+from sys import stdout
 import argparse
 from dotenv import load_dotenv
 
@@ -7,7 +10,10 @@ import yaml
 
 from corpus_distance.pipeline import create_and_set_storage_directory
 
-from utils.utils import perform_initial_check_config, set_logger, load_llm_params
+from utils.utils import (
+    perform_initial_check_config, set_logger, load_llm_params,
+    check_eval_parameters
+)
 
 from pos import pos_tag_with_stanza, pos_tag_with_llm, eval_pos
 from lemma import lemmatise_with_stanza, lemmatise_with_llm, evaluate_lemma
@@ -16,18 +22,31 @@ from topic_modelling import perform_topic_modelling
 
 
 def main(args):
+    logger = getLogger('preprocessor_initialize')
+    logger.setLevel(10)
+    handler = StreamHandler(stdout)
+    handler.setFormatter(Formatter(
+        fmt="%(asctime)s %(levelname)s: %(message)s",
+                                datefmt='%Y-%m-%d %H:%M:%S'
+    ))
+    logger.addHandler(handler)
     load_dotenv()
+    logger.info("Environment is loaded!")
     config_path = args.config if os.path.exists(args.config) else os.path.join(os.getcwd(), 'config.yaml')
+    if not isfile(config_path):
+        raise ValueError("Configuration path %s is not valid", config_path)
     with open(config_path, 'r', encoding='utf-8') as f:
+        logger.info("Config is being loaded from %s", config_path)
         config = yaml.safe_load(f)
-    # TODO: add alternative checks if .env does not exist
-    # TODO: set separate path to dir with exps and hide it in .env, only each exp dir should be in .yaml
+    logger.info("Config is loaded successfully")
     experiments_storage = config["exp_dir"] if "exp_dir" in config.keys() and os.path.exists(config["exp_dir"]) else os.getcwd()
+    logger.info("Experiment storage set to %s", experiments_storage)
     exp_dir = os.path.join(experiments_storage, config["exp_name"])
     perform_initial_check_config(config)
     create_and_set_storage_directory(exp_dir)
     if not bool(config["tagging_settings"]):
         raise ValueError("No settings for tagging")
+    logger.info("Initial check finished, see further report in %s", exp_dir)    
     logger = set_logger(exp_dir)
     logger.debug('Configuration loaded: %s', config)
     if not bool(config["tagging_settings"]):
@@ -62,11 +81,8 @@ def main(args):
                             pos_tag_with_llm(settings["input_file"], exp_dir, llm_params)
                         case _:
                             raise ValueError(f"Incorrect model parameter, received {config["model"]}")
-                case "eval":
-                    if not bool(settings["pred_file"]) or not os.path.exists(settings["pred_file"]):
-                        raise ValueError("Input file does not exist")
-                    if not bool(settings["gold_file"]) or not os.path.exists(settings["gold_file"]):
-                        raise ValueError("Input file does not exist")
+                case "eval":                    
+                    check_eval_parameters(settings)
                     if not "train_result" in settings.keys() or not bool(settings["train_result"]) or settings["train_result"] == "not_set" or type(settings["train_result"]) != float or settings["train_result"] < 0:
                         logger.warning("Train result not supplied, setting to default value")
                         settings["train_result"] = -1
@@ -80,7 +96,7 @@ def main(args):
                     if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
                         raise ValueError("Input file does not exist")
                     if not "pretagged" in settings.keys():
-                        logger.warning("Information on tagging not supplied, performing the whole pipeline")
+                        logger.warning("Information on tagging not supplied")
                         settings["pretagged"] = False
                     match config["model"]:
                         case "stanza":
@@ -92,11 +108,8 @@ def main(args):
                             lemmatise_with_llm(settings["input_file"], exp_dir, llm_params, pretagged=settings["pretagged"])
                         case _:
                             raise ValueError(f"Incorrect model parameter, received {config["model"]}")
-                case "eval":
-                    if not bool(settings["pred_file"]) or not os.path.exists(settings["pred_file"]):
-                        raise ValueError("Input file does not exist")
-                    if not bool(settings["gold_file"]) or not os.path.exists(settings["gold_file"]):
-                        raise ValueError("Input file does not exist")
+                case "eval":                    
+                    check_eval_parameters(settings)
                     if not "train_result" in settings.keys() or not bool(settings["train_result"]) or settings["train_result"] == "not_set" or type(settings["train_result"]) != float or settings["train_result"] < 0:
                         logger.warning("Train result not supplied, setting to default value")
                         settings["train_result"] = -1
@@ -107,7 +120,7 @@ def main(args):
                     if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
                         raise ValueError("Input file does not exist")
                     if not "pretagged" in settings.keys():
-                        logger.warning("Information on tagging not supplied, performing the whole pipeline")
+                        logger.warning("Information on tagging not supplied")
                         settings["pretagged"] = False
                     match config["model"]:
                         case "stanza":
@@ -118,10 +131,7 @@ def main(args):
                         case _:
                             raise ValueError(f"Incorrect model parameter, received {config["model"]}")
                 case "eval":
-                    if not bool(settings["pred_file"]) or not os.path.exists(settings["pred_file"]):
-                        raise ValueError("Input file does not exist")
-                    if not bool(settings["gold_file"]) or not os.path.exists(settings["gold_file"]):
-                        raise ValueError("Input file does not exist")
+                    check_eval_parameters(settings)
                     if not "train_result" in settings.keys() or not bool(settings["train_result"]) or settings["train_result"] == "not_set" or type(settings["train_result"]) != float or settings["train_result"] < 0:
                         logger.warning("Train result not supplied, setting to default value")
                         settings["train_result"] = -1

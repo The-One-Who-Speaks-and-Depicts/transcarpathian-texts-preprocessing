@@ -9,75 +9,33 @@ import ntpath
 from copy import deepcopy
 import os
 
+from pathlib import Path
 import numpy as np
 from numpy.linalg import norm
 import json
 
-
-from openai import OpenAI
-
-from google.genai import Client, types
-
-from utils.utils import ClientParams
+from utils.utils import ClientParams, store_predictions, load_llm_client, load_input_data
 
 logger = logging.getLogger('preprocessor')
 
 def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk') -> None:
-    name = ntpath.basename(input_file_path)
+    logger.debug("Called with arguments %s", locals())
+    doc, doc_for_processing = load_input_data(input_file_path)
     stanza.download(lang)
-    doc = CoNLL.conll2doc(input_file_path)
-    doc_for_procesing = deepcopy(doc)
-    for sent in doc_for_procesing.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                misc_keys = word.misc.split('|')
-                for key in misc_keys:
-                    if 'wf' in key:
-                        new_form = re.sub('\"', '', key)
-                        new_form = re.sub('wf=', '', new_form)
-                        word.text = new_form
-    logger.debug("%s loaded", input_file_path)
     nlp = stanza.Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
     logger.debug("Part-of-speech tagging pipeline prepared")
-    logger.debug("Called with arguments %s", locals())
-    doc_processed = nlp(doc_for_procesing)
+    doc_processed = nlp(doc_for_processing)
     for sent_idx, sent in enumerate(doc_processed.sentences):
         for tkn_idx, token in enumerate(sent.tokens):
-            for wrd_idx, word in enumerate(token.words):
+            for wrd_idx, _ in enumerate(token.words):
                 doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
                 doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-    file_to_store = os.path.join(exp_folder, f"pos_stanza_{name}")
-    CoNLL.write_doc2conll(doc_processed, file_to_store)
-    logger.info("See results of morphological tagging in %s", file_to_store)
-    file_to_edit = os.path.join(exp_folder, f"pos_gold_{name}")
-    CoNLL.write_doc2conll(doc_processed, file_to_edit)
-    logger.info("Edit results of morphological tagging in %s", file_to_edit)
-
+    store_predictions("pos", "stanza", Path(exp_folder), ntpath.basename(input_file_path), doc_processed)
 
 def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams()) -> None:
     logger.debug("Called with arguments %s", locals())
-    name = ntpath.basename(input_file_path)
-    doc = CoNLL.conll2doc(input_file_path)
-    doc_for_processing = deepcopy(doc)
-    for sent in doc_for_processing.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                misc_keys = word.misc.split('|')
-                for key in misc_keys:
-                    if 'wf' in key:
-                        new_form = re.sub('\"', '', key)
-                        new_form = re.sub('wf=', '', new_form)
-                        word.text = new_form
-    logger.debug("%s loaded", input_file_path)
-    client = None
-    match params.api:
-        case "OpenAI":
-            client = OpenAI(
-                api_key=params.api_key,
-                base_url=params.base_url
-            )
-        case _:
-            raise ValueError(f"Incorrect API type, received {params.api}")
+    doc, doc_for_processing = load_input_data(input_file_path)    
+    client = load_llm_client(params.api, params.api_key, params.base_url)
     logger.debug("Part-of-speech tagging pipeline prepared")
     for sent_idx, sent in enumerate(doc_for_processing.sentences):
         sent_tokens = [w.text for w in sent.words]
@@ -148,7 +106,7 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                         continue
 
         for tkn_idx, token in enumerate(sent.tokens):
-            for wrd_idx, word in enumerate(token.words):
+            for wrd_idx, _ in enumerate(token.words):
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].upos = words[str(tkn_idx+1)]['upos']
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].feats = words[str(tkn_idx+1)]['feats'] if words[str(tkn_idx+1)]['feats'] and words[str(tkn_idx+1)]['feats'].strip() else '_'
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
@@ -156,12 +114,7 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
     # models usually contain slash in their name ("google/gemma-3en-4b"),
     # I replace it with underscore
     model_name = re.sub(r'\/', '_', params.model)
-    file_to_store = os.path.join(exp_folder, f"pos_{model_name}_{name}")
-    CoNLL.write_doc2conll(doc_for_processing, file_to_store)
-    logger.info("See results of morphological tagging in %s", file_to_store)
-    file_to_edit = os.path.join(exp_folder, f"pos_gold_{name}")
-    CoNLL.write_doc2conll(doc_for_processing, file_to_edit)
-    logger.info("Edit results of morphological tagging in %s", file_to_edit)
+    store_predictions("pos", model_name, Path(exp_folder), ntpath.basename(input_file_path), doc_for_processing)
 
 def collect_labels(doc: stanza.Document) -> dict:
     result = {'pos': [], 'feats': ['_'], 'deprel': ['_']}    
