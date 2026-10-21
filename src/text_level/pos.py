@@ -6,7 +6,6 @@ from sklearn.metrics import precision_recall_fscore_support
 import stanza
 from stanza.utils.conll import CoNLL
 import ntpath
-from copy import deepcopy
 import os
 
 from pathlib import Path
@@ -14,8 +13,8 @@ import numpy as np
 from numpy.linalg import norm
 import json
 
-
-from utils.llm_utils import ClientParams, load_llm_client
+from utils.data_schema import get_pos_schema
+from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors
 from utils.tagging_utils import store_predictions, load_input_data
 
 logger = logging.getLogger('preprocessor')
@@ -42,39 +41,14 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
     for sent_idx, sent in enumerate(doc_for_processing.sentences):
         sent_tokens = [w.text for w in sent.words]
         sent_tokenised = ' '.join(sent_tokens)
-        words = []
+        words = {}
         prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + '\n' for w in sent.words]}\n")
         retries = 0
         while True:
             match params.api:
                 case "OpenAI":
                     try:
-                        ud_schema = {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": "ud_pos",
-                                "strict": True,
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        str(w.id): {
-                                        "type": "object",
-                                        "properties": {
-                                            "text": {"type": "string"},
-                                            "upos": {"type": "string"},
-                                            "feats": {"type": "string"}
-                                        },
-                                        "required": ["text", "upos", "feats"],
-                                        "additionalProperties":False,
-                                        } for w in sent.words
-                                    },
-                                    "required": [w.id for w in sent.words],
-                                    "additionalProperties": False,
-                                    "minItems": len(sent_tokens),
-                                    "maxItems": len(sent_tokens)
-                                },
-                            }
-                        }
+                        ud_schema = get_pos_schema(sent, sent_tokens)
                         response = client.chat.completions.create(
                             model=params.model,
                             messages=[
@@ -86,37 +60,32 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                             response_format= ud_schema,
                             stream=False
                         )
-                        logger.info(f'Response: {response}')
-                        logger.info(f'Message: {response.choices[0].message.content}')
-                        # small models tend to incontrollably generate code blocks 
-                        # designations around the actual output
-                        cleared_content = re.sub(r'```(json)?\n?', '', response.choices[0].message.content)
-                        annotated = json.loads(cleared_content)
-                        if len(annotated) != len(sent.words):
-                            raise ValueError(
-                                f"Token count mismatch: expected {len(sent.words)} from  {sent_tokenised}, "
-                                f"received {len(annotated)}"
+                        annotated = process_llm_response(
+                            sent,
+                            sent_tokenised,
+                            response,
+                            response.choices[0].messsage.content
                             )
                         words = annotated
                         break
                     except ValueError as e:
-                        logger.error(f"Invalid LLM output, the error is {e}")
-                        retries = retries + 1
-                        if retries > params.retries:
-                            raise ValueError("Too many retries")
-                        prompt = f"The result of {sent_tokenised} processing was incorrect, there was an exception {e}. Please, re-perform the task, keeping the exception in mind. The task is {params.prompt.format(sent=sent_tokenised)}"
+                        retries, prompt = process_llm_errors(
+                            e,
+                            retries,
+                            params.retries,
+                            sent_tokenised,
+                            params.prompt.format(sent=sent_tokenised)
+                            )
                         continue
-
+                case _:
+                    raise ValueError(f"Invalid LLM call API type, received {params.api}")
         for tkn_idx, token in enumerate(sent.tokens):
             for wrd_idx, _ in enumerate(token.words):
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].upos = words[str(tkn_idx+1)]['upos']
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].feats = words[str(tkn_idx+1)]['feats'] if words[str(tkn_idx+1)]['feats'] and words[str(tkn_idx+1)]['feats'].strip() else '_'
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-    # models usually contain slash in their name ("google/gemma-3en-4b"),
-    # I replace it with underscore
-    model_name = re.sub(r'\/', '_', params.model)
-    store_predictions("pos", model_name, Path(exp_folder), ntpath.basename(input_file_path), doc_for_processing)
+    store_predictions("pos", params.model, Path(exp_folder), ntpath.basename(input_file_path), doc_for_processing)
 
 def collect_labels(doc: stanza.Document) -> dict:
     result = {'pos': [], 'feats': ['_'], 'deprel': ['_']}    

@@ -29,6 +29,9 @@ def store_predictions(
         dataset_name: str,
         doc: Document
         ) -> None:
+    logger.info("Input: %s", locals())
+    # models usually contain slash in their name ("google/gemma-3en-4b"),
+    # I replace it with underscore
     model_name = sub(r'\/', '_', model_name)
     file_to_store = join(exp_folder, f"{stage_name}_{model_name}_{dataset_name}")
     CoNLL.write_doc2conll(doc, file_to_store)

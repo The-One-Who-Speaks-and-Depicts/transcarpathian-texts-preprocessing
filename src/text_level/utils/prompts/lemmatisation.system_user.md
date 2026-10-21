@@ -2,27 +2,6 @@
 
 Your task is to perform a lemmatisation in the Universal Dependecies framework for the following pre-tokenized sentence: {sent}
 
-
-# The idea
-
-Your task is to transform a sentence, like "Великий Липник ." into a list of objects of the following structure:
-
-[
-    "1": {{
-        "text": TOKEN 1,
-        "lemma": LEMMA,
-    }},
-    "2": {{
-        "text": TOKEN 2,
-        "lemma": LEMMA,
-    }},
-    (...)
-    "N": {{
-        "text": TOKEN N
-        "lemma": LEMMA,
-    }}
-]
-
 # Input
 
 1. A sentence in a pre-tokenised form.
@@ -128,27 +107,7 @@ Your task is to transform a sentence, like "Великий Липник ." into 
   }}
 }}
 
-
 # Output constraints
 
 1. Each annotated token in your answer should be exactly the annotated version of a token in the original dataset. Follow strictly the number of tokens in the original sentence as well as token themeselves, it is strictly prohibited to invent new tokens.
-2. The providing of explanation, or just instruction instead of the result, is strictly prohibited. The output should be only like this:
-
-{{
-  "1": {{
-    "text": "Продавши",
-    "lemma": "продати"
-  }},
-  "2": {{
-    "text": "свій",
-    "lemma": "свій"
-  }},
-}}
-
-
-
-The next step in the pipeline is the immediate parsing of the result, so in case there is explanation, or code block denotation, or something like this, there will be an error.
-
-# Checks to perform after the input is generated
-
-1. The number of objects in the generated array vs. the number of tokens. These should be equal. Otherwise, amend and regenerate.
+2. The providing of explanation, or just instruction instead of the result, is strictly prohibited. The next step in the pipeline is the immediate parsing of the result, so in case there is explanation, or code block denotation, or something like this, there will be an error.
