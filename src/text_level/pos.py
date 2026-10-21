@@ -1,23 +1,19 @@
-import logging
+from logging import getLogger
+from ntpath import basename
+from os.path import join
+from pathlib import Path
 
-import re
-
+import numpy as np
 from sklearn.metrics import precision_recall_fscore_support
+
 import stanza
 from stanza.utils.conll import CoNLL
-import ntpath
-import os
-
-from pathlib import Path
-import numpy as np
-from numpy.linalg import norm
-import json
 
 from utils.data_schema import get_pos_schema
 from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors
 from utils.tagging_utils import store_predictions, load_input_data
 
-logger = logging.getLogger('preprocessor')
+logger = getLogger('preprocessor')
 
 def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk') -> None:
     logger.debug("Called with arguments %s", locals())
@@ -31,7 +27,7 @@ def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk')
             for wrd_idx, _ in enumerate(token.words):
                 doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
                 doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-    store_predictions("pos", "stanza", Path(exp_folder), ntpath.basename(input_file_path), doc_processed)
+    store_predictions("pos", "stanza", Path(exp_folder), basename(input_file_path), doc_processed)
 
 def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams()) -> None:
     logger.debug("Called with arguments %s", locals())
@@ -88,7 +84,7 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].feats = words[str(tkn_idx+1)]['feats'] if words[str(tkn_idx+1)]['feats'] and words[str(tkn_idx+1)]['feats'].strip() else '_'
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-    store_predictions("pos", params.model, Path(exp_folder), ntpath.basename(input_file_path), doc_for_processing)
+    store_predictions("pos", params.model, Path(exp_folder), basename(input_file_path), doc_for_processing)
 
 def collect_labels(doc: stanza.Document) -> dict:
     result = {'pos': [], 'feats': ['_'], 'deprel': ['_']}    
@@ -195,7 +191,7 @@ def score_for_single_morph_feature(pred: list, true: list, label: str) -> None:
 def robustness_score(original_score: float, current_score: float, end: int):
     ideal_vector = np.array([end, 0])
     current_vector = np.array([end, current_score - original_score])
-    cos_sim = np.dot(ideal_vector, current_vector) / (norm(ideal_vector) * norm(current_vector))
+    cos_sim = np.dot(ideal_vector, current_vector) / (np.linalg.norm(ideal_vector) * np.linalg.norm(current_vector))
     score_with_diff = original_score * (1 - cos_sim)
     robustness_coefficient = 1 if current_score >= original_score else -1
     return score_with_diff * robustness_coefficient
@@ -282,8 +278,8 @@ def eval_pos(gold_file_path: str, pred_file_path: str, train_result: float, trai
         logger.debug('Starting scoring accuracy score for %s', morph)
         score_for_single_morph_feature(pred_morph, gold_morph, morph)
     gold_with_rapidity = assign_rapidity_rate(pred, gold)
-    name = ntpath.basename(gold_file_path)
-    file_to_store = os.path.join(exp_folder, f"rapidity_{name}")
+    name = basename(gold_file_path)
+    file_to_store = join(exp_folder, f"rapidity_{name}")
     CoNLL.write_doc2conll(gold_with_rapidity, file_to_store)
     logger.info("See results of assigned rapidity in %s", file_to_store)
     logger.info("PoS and morphological tagging evaluation is finished")
