@@ -6,17 +6,16 @@ import stanza
 from stanza.utils.conll import CoNLL
 import ntpath
 from copy import deepcopy
-import os
 
 from stanza.models.common.doc import Document, Sentence, Word
 
-from openai import OpenAI
 
 
 from zss import Node, simple_distance
 
 from pos import collect_labels, robustness_score
-from utils.utils import ClientParams, store_predictions, load_llm_client, load_input_data
+from utils.llm_utils import ClientParams, load_llm_client
+from utils.tagging_utils import store_predictions, load_input_data
 
 
 

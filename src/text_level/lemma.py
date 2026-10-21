@@ -2,11 +2,9 @@ import json
 import logging
 
 import re
-from openai import OpenAI
 import stanza
 from stanza.utils.conll import CoNLL
 import ntpath
-from copy import deepcopy
 import os
 
 from Levenshtein import distance as lev
@@ -14,7 +12,8 @@ from pyjarowinkler.distance import get_jaro_distance as jw
 
 
 from pos import collect_labels, robustness_score
-from utils.utils import ClientParams, load_input_data, load_llm_client, store_predictions
+from utils.llm_utils import ClientParams, load_llm_client
+from utils.tagging_utils import store_predictions, load_input_data
 
 logger = logging.getLogger('preprocessor')
 

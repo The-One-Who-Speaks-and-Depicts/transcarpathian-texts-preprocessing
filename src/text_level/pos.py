@@ -14,7 +14,9 @@ import numpy as np
 from numpy.linalg import norm
 import json
 
-from utils.utils import ClientParams, store_predictions, load_llm_client, load_input_data
+
+from utils.llm_utils import ClientParams, load_llm_client
+from utils.tagging_utils import store_predictions, load_input_data
 
 logger = logging.getLogger('preprocessor')
 

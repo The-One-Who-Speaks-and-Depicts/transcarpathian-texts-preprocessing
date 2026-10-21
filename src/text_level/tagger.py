@@ -11,9 +11,11 @@ import yaml
 from corpus_distance.pipeline import create_and_set_storage_directory
 
 from utils.utils import (
-    perform_initial_check_config, set_logger, load_llm_params,
-    check_eval_parameters
+    perform_initial_check_config, set_logger
 )
+
+from utils.llm_utils import load_llm_params
+from utils.tagging_utils import check_eval_parameters
 
 from pos import pos_tag_with_stanza, pos_tag_with_llm, eval_pos
 from lemma import lemmatise_with_stanza, lemmatise_with_llm, evaluate_lemma
