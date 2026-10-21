@@ -1,24 +1,20 @@
-import logging
-
-import re
+from logging import getLogger
+from ntpath import basename
+from os.path import join
+from pathlib import Path
 
 from sklearn.metrics import precision_recall_fscore_support
+
 import stanza
+from stanza.models.common.doc import Document
 from stanza.utils.conll import CoNLL
-import ntpath
-from copy import deepcopy
-import os
 
-from pathlib import Path
-import numpy as np
-from numpy.linalg import norm
-import json
+from utils.data_schema import get_pos_schema
+from utils.eval_utils import collect_labels, robustness_score, collect_annotation, AnnotationLabels, prepare_annotation
+from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors, transfer_llm_annotation
+from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
 
-
-from utils.llm_utils import ClientParams, load_llm_client
-from utils.tagging_utils import store_predictions, load_input_data
-
-logger = logging.getLogger('preprocessor')
+logger = getLogger('preprocessor')
 
 def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk') -> None:
     logger.debug("Called with arguments %s", locals())
@@ -27,12 +23,8 @@ def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk')
     nlp = stanza.Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
     logger.debug("Part-of-speech tagging pipeline prepared")
     doc_processed = nlp(doc_for_processing)
-    for sent_idx, sent in enumerate(doc_processed.sentences):
-        for tkn_idx, token in enumerate(sent.tokens):
-            for wrd_idx, _ in enumerate(token.words):
-                doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
-                doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-    store_predictions("pos", "stanza", Path(exp_folder), ntpath.basename(input_file_path), doc_processed)
+    doc_processed = restore_original_tags(doc_processed, doc, pretagged = False)
+    store_predictions("pos", "stanza", Path(exp_folder), basename(input_file_path), doc_processed)
 
 def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams()) -> None:
     logger.debug("Called with arguments %s", locals())
@@ -42,39 +34,14 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
     for sent_idx, sent in enumerate(doc_for_processing.sentences):
         sent_tokens = [w.text for w in sent.words]
         sent_tokenised = ' '.join(sent_tokens)
-        words = []
         prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + '\n' for w in sent.words]}\n")
+        annotated_sent = {}
         retries = 0
-        while True:
-            match params.api:
-                case "OpenAI":
-                    try:
-                        ud_schema = {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": "ud_pos",
-                                "strict": True,
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        str(w.id): {
-                                        "type": "object",
-                                        "properties": {
-                                            "text": {"type": "string"},
-                                            "upos": {"type": "string"},
-                                            "feats": {"type": "string"}
-                                        },
-                                        "required": ["text", "upos", "feats"],
-                                        "additionalProperties":False,
-                                        } for w in sent.words
-                                    },
-                                    "required": [w.id for w in sent.words],
-                                    "additionalProperties": False,
-                                    "minItems": len(sent_tokens),
-                                    "maxItems": len(sent_tokens)
-                                },
-                            }
-                        }
+        while True:            
+            try:
+                response = {}
+                match params.api:
+                    case "OpenAI":
                         response = client.chat.completions.create(
                             model=params.model,
                             messages=[
@@ -83,54 +50,38 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                             ],
                             temperature=params.temperature,
                             seed=params.seed,
-                            response_format= ud_schema,
+                            response_format= get_pos_schema(sent, sent_tokens),
                             stream=False
                         )
-                        logger.info(f'Response: {response}')
-                        logger.info(f'Message: {response.choices[0].message.content}')
-                        # small models tend to incontrollably generate code blocks 
-                        # designations around the actual output
-                        cleared_content = re.sub(r'```(json)?\n?', '', response.choices[0].message.content)
-                        annotated = json.loads(cleared_content)
-                        if len(annotated) != len(sent.words):
-                            raise ValueError(
-                                f"Token count mismatch: expected {len(sent.words)} from  {sent_tokenised}, "
-                                f"received {len(annotated)}"
-                            )
-                        words = annotated
-                        break
-                    except ValueError as e:
-                        logger.error(f"Invalid LLM output, the error is {e}")
-                        retries = retries + 1
-                        if retries > params.retries:
-                            raise ValueError("Too many retries")
-                        prompt = f"The result of {sent_tokenised} processing was incorrect, there was an exception {e}. Please, re-perform the task, keeping the exception in mind. The task is {params.prompt.format(sent=sent_tokenised)}"
-                        continue
-
-        for tkn_idx, token in enumerate(sent.tokens):
-            for wrd_idx, _ in enumerate(token.words):
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].upos = words[str(tkn_idx+1)]['upos']
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].feats = words[str(tkn_idx+1)]['feats'] if words[str(tkn_idx+1)]['feats'] and words[str(tkn_idx+1)]['feats'].strip() else '_'
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-    # models usually contain slash in their name ("google/gemma-3en-4b"),
-    # I replace it with underscore
-    model_name = re.sub(r'\/', '_', params.model)
-    store_predictions("pos", model_name, Path(exp_folder), ntpath.basename(input_file_path), doc_for_processing)
-
-def collect_labels(doc: stanza.Document) -> dict:
-    result = {'pos': [], 'feats': ['_'], 'deprel': ['_']}    
-    for sent in doc.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                result['pos'].append(word.upos)
-                if word.feats:
-                    result['feats'].extend([i.split('=')[0] for i in word.feats.split('|') if i and i.strip()])
-                result['deprel'].append(word.deprel)
-    result['pos'] = list(set(result['pos']))
-    result['feats'] = list(set(result['feats']))
-    result['deprel'] = list(set(result['deprel']))
-    return result
+                        response_content = response.choices[0].messsage.content
+                    case _:
+                        raise AttributeError(f"Invalid LLM call API type, received {params.api}")
+                annotated_sent = process_llm_response(
+                    sent,
+                    sent_tokenised,
+                    response,
+                    response_content
+                    )
+                break
+            except ValueError as e:
+                retries, prompt = process_llm_errors(
+                    e,
+                    retries,
+                    params.retries,
+                    sent_tokenised,
+                    params.prompt.format(sent=sent_tokenised)
+                    )
+                continue
+                    
+        doc_for_processing = transfer_llm_annotation(
+            doc_for_processing,
+            sent_idx,
+            sent,
+            ['upos', 'feats'],
+            annotated_sent
+        )
+    doc_for_processing = restore_original_tags(doc_for_processing, doc, pretagged = False)
+    store_predictions("pos", params.model, Path(exp_folder), basename(input_file_path), doc_for_processing)
 
 def score_for_single_pos(pred: list, true: list, label: str) -> None:
     overall_size = len(true)
@@ -220,13 +171,6 @@ def score_for_single_morph_feature(pred: list, true: list, label: str) -> None:
     acc = correct/len(relevant_tokens)
     logger.info("Accuracy for %s is %.2f%s from %s tokens", label, acc*100, "%", len(relevant_tokens))
 
-def robustness_score(original_score: float, current_score: float, end: int):
-    ideal_vector = np.array([end, 0])
-    current_vector = np.array([end, current_score - original_score])
-    cos_sim = np.dot(ideal_vector, current_vector) / (norm(ideal_vector) * norm(current_vector))
-    score_with_diff = original_score * (1 - cos_sim)
-    robustness_coefficient = 1 if current_score >= original_score else -1
-    return score_with_diff * robustness_coefficient
 
 def score_rapidity_rate(pred: any, true: any) -> int:
     if pred.upos != true.upos:
@@ -248,7 +192,7 @@ def score_rapidity_rate(pred: any, true: any) -> int:
                 rapidity_rate = rapidity_rate + 1
     return rapidity_rate
 
-def assign_rapidity_rate(pred: stanza.Document, gold: stanza.Document) -> stanza.Document:
+def assign_pos_rapidity_rate(pred: Document, gold: Document) -> Document:
     for sent_idx, sent in enumerate(pred.sentences):
         for token_idx, token in enumerate(sent.tokens):
             for word_idx, word in enumerate(token.words):
@@ -262,58 +206,73 @@ def assign_rapidity_rate(pred: stanza.Document, gold: stanza.Document) -> stanza
     return gold
 
 
-
-def eval_pos(gold_file_path: str, pred_file_path: str, train_result: float, train_ufeats: float, exp_folder: str) -> None:
-    logger.info("POS: starting comparison between %s and %s", gold_file_path, pred_file_path)
-    logger.debug("Called with arguments %s", locals())
-    gold = CoNLL.conll2doc(gold_file_path)
-    labels = collect_labels(gold)
-    logger.info("PoS and morphological labels are %s", labels)
-    pred = CoNLL.conll2doc(pred_file_path)
-    gold_pos = []
-    for sent in gold.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                gold_pos.append(word.upos)
-    pred_pos = []
-    for sent in pred.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                pred_pos.append(word.upos)
-    common_results = precision_recall_fscore_support(gold_pos, pred_pos, average='macro')
+def eval_pos(
+        gold_pos: list[AnnotationLabels], pred_pos: list[AnnotationLabels],
+        train_result: float, labels: list[str]
+        ) -> None:
+    gold_pos = [a.pos for a in gold_pos]
+    pred_pos = [a.pos for a in pred_pos]
+    common_results = precision_recall_fscore_support(
+        gold_pos, 
+        pred_pos,
+        average='macro'
+        )
     logger.info('PoS precision: %.2f%s', common_results[0] * 100, "%")
     logger.info('PoS recall: %.2f%s', common_results[1] * 100, "%")
     logger.info('PoS macro F1-score: %.2f%s', common_results[2] * 100, "%")
     if (train_result and train_result >= 0):
         logger.info('PoS robustness:  %.2f', robustness_score(train_result, common_results[2] * 100))
-    for pos in labels['pos']:
+    for pos in labels:
         logger.debug('Starting scoring accuracy score for %s', pos)
         score_for_single_pos(pred_pos, gold_pos, pos)
-    gold_morph = []
-    for sent in gold.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                gold_morph.append(word.feats)
-    pred_morph = []
-    for sent in pred.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                pred_morph.append(word.feats)
+
+
+def eval_feats(gold_morph: list[AnnotationLabels], pred_morph: list[AnnotationLabels], train_result: float, labels: list[str]) -> None:
+    gold_morph = [a.feats for a in gold_morph]
+    pred_morph = [a.feats for a in pred_morph]
     morph_comparison = [score_feats_acc(i[0], i[1]) for i in zip(pred_morph, gold_morph)]
     morph_acc = sum(morph_comparison)/len(morph_comparison)
     logger.info("UFeats match by keys:  %.2f%s", morph_acc*100, "%")
     ufeats_exact = len([i for i in zip(gold_morph, pred_morph) if i[0] == i[1]])/len(gold_morph)
     logger.info("UFeats exact match: %.2f%s", ufeats_exact*100, "%")
-    if (train_ufeats and train_ufeats >= 0):
-        logger.info('UFeats exact robustness:  %.2f', robustness_score(train_ufeats, ufeats_exact * 100))
-    for morph in labels['feats']:
+    if (train_result and train_result >= 0):
+        logger.info('UFeats exact robustness:  %.2f', robustness_score(train_result, ufeats_exact * 100))
+    for morph in labels:
         logger.debug('Starting scoring accuracy score for %s', morph)
         score_for_single_morph_feature(pred_morph, gold_morph, morph)
-    gold_with_rapidity = assign_rapidity_rate(pred, gold)
-    name = ntpath.basename(gold_file_path)
-    file_to_store = os.path.join(exp_folder, f"rapidity_{name}")
+
+def assign_rapidity_rate(gold: Document, pred: Document, gold_file_path: str, exp_folder: str) -> None:
+    gold_with_rapidity = assign_pos_rapidity_rate(pred, gold)
+    name = basename(gold_file_path)
+    file_to_store = join(exp_folder, f"rapidity_{name}")
     CoNLL.write_doc2conll(gold_with_rapidity, file_to_store)
     logger.info("See results of assigned rapidity in %s", file_to_store)
+
+def eval_morphology(
+        gold_file_path: str,
+        pred_file_path: str,
+        train_result: float,
+        train_ufeats: float,
+        exp_folder: str
+        ) -> None:
+    logger.debug("Called with arguments %s", locals())
+    logger.info("POS: starting comparison between %s and %s", gold_file_path, pred_file_path)
+    dataset_for_annotation = prepare_annotation(gold_file_path, pred_file_path)
+    logger.info("PoS and morphological labels are %s", dataset_for_annotation['labels'])
+    eval_pos(
+        dataset_for_annotation['gold'],
+        dataset_for_annotation['pred'],
+        train_result,
+        dataset_for_annotation['labels']['pos']
+        )
+    eval_feats(
+        dataset_for_annotation['gold'],
+        dataset_for_annotation['pred'],
+        train_ufeats,
+        dataset_for_annotation['labels']['feats']
+        )
+    assign_rapidity_rate(
+        dataset_for_annotation['gold_doc'], dataset_for_annotation['pred_doc'],
+        gold_file_path, exp_folder)
     logger.info("PoS and morphological tagging evaluation is finished")
-    
-    
+

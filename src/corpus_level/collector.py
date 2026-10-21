@@ -12,6 +12,7 @@ from corpus_distance.pipeline import create_and_set_storage_directory
 from utils.utils import perform_initial_check_config, set_logger
 
 def main(args):
+    # TODO: config loading is almost identical, there should be something more interesting to do
     config_path = args.config if os.path.exists(args.config) else os.path.join(os.getcwd(), 'config.yaml')
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
