@@ -44,10 +44,11 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
         words = {}
         prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + '\n' for w in sent.words]}\n")
         retries = 0
-        while True:
-            match params.api:
-                case "OpenAI":
-                    try:
+        while True:            
+            try:
+                response = {}
+                match params.api:
+                    case "OpenAI":
                         ud_schema = get_pos_schema(sent, sent_tokens)
                         response = client.chat.completions.create(
                             model=params.model,
@@ -60,25 +61,27 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                             response_format= ud_schema,
                             stream=False
                         )
-                        annotated = process_llm_response(
-                            sent,
-                            sent_tokenised,
-                            response,
-                            response.choices[0].messsage.content
-                            )
-                        words = annotated
-                        break
-                    except ValueError as e:
-                        retries, prompt = process_llm_errors(
-                            e,
-                            retries,
-                            params.retries,
-                            sent_tokenised,
-                            params.prompt.format(sent=sent_tokenised)
-                            )
-                        continue
-                case _:
-                    raise ValueError(f"Invalid LLM call API type, received {params.api}")
+                        response_content = response.choices[0].messsage.content
+                    case _:
+                        raise AttributeError(f"Invalid LLM call API type, received {params.api}")
+                annotated = process_llm_response(
+                    sent,
+                    sent_tokenised,
+                    response,
+                    response_content
+                    )
+                words = annotated
+                break
+            except ValueError as e:
+                retries, prompt = process_llm_errors(
+                    e,
+                    retries,
+                    params.retries,
+                    sent_tokenised,
+                    params.prompt.format(sent=sent_tokenised)
+                    )
+                continue
+                    
         for tkn_idx, token in enumerate(sent.tokens):
             for wrd_idx, _ in enumerate(token.words):
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].upos = words[str(tkn_idx+1)]['upos']
