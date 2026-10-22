@@ -11,7 +11,7 @@ from stanza.utils.conll import CoNLL
 
 from utils.data_schema import get_pos_schema
 from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors
-from utils.tagging_utils import store_predictions, load_input_data
+from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
 
 logger = getLogger('preprocessor')
 
@@ -22,11 +22,7 @@ def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk')
     nlp = stanza.Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
     logger.debug("Part-of-speech tagging pipeline prepared")
     doc_processed = nlp(doc_for_processing)
-    for sent_idx, sent in enumerate(doc_processed.sentences):
-        for tkn_idx, token in enumerate(sent.tokens):
-            for wrd_idx, _ in enumerate(token.words):
-                doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
-                doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+    doc_processed = restore_original_tags(doc_processed, doc, pretagged = False)
     store_predictions("pos", "stanza", Path(exp_folder), basename(input_file_path), doc_processed)
 
 def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams()) -> None:
@@ -45,7 +41,6 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                 response = {}
                 match params.api:
                     case "OpenAI":
-                        ud_schema = get_pos_schema(sent, sent_tokens)
                         response = client.chat.completions.create(
                             model=params.model,
                             messages=[
@@ -54,7 +49,7 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                             ],
                             temperature=params.temperature,
                             seed=params.seed,
-                            response_format= ud_schema,
+                            response_format= get_pos_schema(sent, sent_tokens),
                             stream=False
                         )
                         response_content = response.choices[0].messsage.content
@@ -82,8 +77,7 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
             for wrd_idx, _ in enumerate(token.words):
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].upos = words[str(tkn_idx+1)]['upos']
                 doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].feats = words[str(tkn_idx+1)]['feats'] if words[str(tkn_idx+1)]['feats'] and words[str(tkn_idx+1)]['feats'].strip() else '_'
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+    doc_for_processing = restore_original_tags(doc_for_processing, doc, pretagged = False)
     store_predictions("pos", params.model, Path(exp_folder), basename(input_file_path), doc_for_processing)
 
 def collect_labels(doc: stanza.Document) -> dict:

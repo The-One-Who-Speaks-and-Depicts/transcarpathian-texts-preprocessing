@@ -1,3 +1,16 @@
+"""
+Contains utilitary function for annotating texts.
+
+* restore_original_documents (
+    stanza.models.common.doc.Document,
+    stanza.models.common.doc.Document,
+    bool
+) -> stanza.models.common.doc.Document: takes the annotated document,
+the original document, and restores original token forms and/or
+language-specific parts-of-speech (in case there was no pretagging).
+Returns the annotated document with restored annotation. 
+"""
+
 
 from copy import deepcopy
 from logging import getLogger
@@ -55,3 +68,29 @@ def load_input_data(input_file_path: str) -> tuple[Document, Document]:
                         word.text = new_form
     logger.debug("%s loaded", input_file_path)
     return doc, doc_for_processing
+
+def restore_original_tags(
+        doc_for_processing: Document, original_document: Document, pretagged: bool = False
+        ) -> Document:
+    """
+    Restores original annotation in a CoNLL-U document: puts non-normalised tokens back to their
+    positions as the original tokens of the word, and assings empty value to a None
+    xpos (a language-specific part-of-speech), set by a Stanza tagger, in case it is required. 
+
+    Params:
+        doc_for_processing (stanza.models.common.doc.Document): the annotated document.
+        original_document (stanza.models.common.doc.Document): the document in its original form
+        pretagged (bool): the information on earlier annotation, used for assigning or
+        not assigning (because it may exist) an xpos to the tokens of the preprocessed document.
+    
+    Returns:
+        stanza.models.common.doc.Document: the annotated document with the original tokenisation
+        and, optionally, xpos)
+    """
+    for sent_idx, sent in enumerate(doc_for_processing.sentences):
+        for tkn_idx, token in enumerate(sent.tokens):
+            for wrd_idx, _ in enumerate(token.words):
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = original_document.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+                if not pretagged:
+                    doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+    return doc_for_processing
