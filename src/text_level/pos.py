@@ -10,7 +10,7 @@ import stanza
 from stanza.utils.conll import CoNLL
 
 from utils.data_schema import get_pos_schema
-from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors
+from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors, transfer_llm_annotation
 from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
 
 logger = getLogger('preprocessor')
@@ -33,7 +33,7 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
     for sent_idx, sent in enumerate(doc_for_processing.sentences):
         sent_tokens = [w.text for w in sent.words]
         sent_tokenised = ' '.join(sent_tokens)
-        words = {}
+        annotated_sent = {}
         prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + '\n' for w in sent.words]}\n")
         retries = 0
         while True:            
@@ -55,13 +55,12 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                         response_content = response.choices[0].messsage.content
                     case _:
                         raise AttributeError(f"Invalid LLM call API type, received {params.api}")
-                annotated = process_llm_response(
+                annotated_sent = process_llm_response(
                     sent,
                     sent_tokenised,
                     response,
                     response_content
                     )
-                words = annotated
                 break
             except ValueError as e:
                 retries, prompt = process_llm_errors(
@@ -73,10 +72,13 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
                     )
                 continue
                     
-        for tkn_idx, token in enumerate(sent.tokens):
-            for wrd_idx, _ in enumerate(token.words):
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].upos = words[str(tkn_idx+1)]['upos']
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].feats = words[str(tkn_idx+1)]['feats'] if words[str(tkn_idx+1)]['feats'] and words[str(tkn_idx+1)]['feats'].strip() else '_'
+        doc_for_processing = transfer_llm_annotation(
+            doc_for_processing,
+            sent_idx,
+            sent,
+            ['upos', 'feats'],
+            annotated_sent
+        )
     doc_for_processing = restore_original_tags(doc_for_processing, doc, pretagged = False)
     store_predictions("pos", params.model, Path(exp_folder), basename(input_file_path), doc_for_processing)
 
