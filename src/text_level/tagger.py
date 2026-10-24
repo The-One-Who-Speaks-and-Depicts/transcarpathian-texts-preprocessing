@@ -17,7 +17,7 @@ from utils.utils import (
 from utils.llm_utils import load_llm_params
 from utils.tagging_utils import check_eval_parameters
 
-from pos import pos_tag_with_stanza, pos_tag_with_llm, eval_pos
+from pos import pos_tag_with_stanza, pos_tag_with_llm, eval_morphology
 from lemma import lemmatise_with_stanza, lemmatise_with_llm, evaluate_lemma
 from depparse import depparse_with_stanza, depparse_with_llm, evaluate_depparse
 from topic_modelling import perform_topic_modelling  
@@ -91,7 +91,7 @@ def main(args):
                     if not "train_ufeats" in settings.keys() or not bool(settings["train_ufeats"]) or settings["train_ufeats"] == "not_set" or type(settings["train_ufeats"]) != float or settings["train_ufeats"] < 0:
                         logger.warning("Train ufeats accuracy not supplied, setting to default value")
                         settings["train_ufeats"] = -1
-                    eval_pos(settings["gold_file"], settings["pred_file"], settings["train_result"], settings["train_ufeats"], exp_dir)
+                    eval_morphology(settings["gold_file"], settings["pred_file"], settings["train_result"], settings["train_ufeats"], exp_dir)
         case "lemma":
             match phase:
                 case "pred":
