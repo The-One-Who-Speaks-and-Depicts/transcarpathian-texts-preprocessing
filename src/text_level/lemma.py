@@ -1,0 +1,333 @@
+import json
+import logging
+
+import re
+import stanza
+from stanza.utils.conll import CoNLL
+import ntpath
+import os
+
+from Levenshtein import distance as lev
+from pyjarowinkler.distance import get_jaro_distance as jw
+
+
+from pos import collect_labels, robustness_score
+from utils.llm_utils import ClientParams, load_llm_client
+from utils.tagging_utils import store_predictions, load_input_data
+
+logger = logging.getLogger('preprocessor')
+
+def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk', pretagged: bool = True):
+    doc, doc_for_processing = load_input_data(input_file_path)    
+    stanza.download(lang)
+    for sent in doc_for_processing.sentences:
+        for token in sent.tokens:
+            for word in token.words:
+                misc_keys = word.misc.split('|')
+                for key in misc_keys:
+                    if 'wf' in key:
+                        new_form = re.sub('\"', '', key)
+                        new_form = re.sub('wf=', '', new_form)
+                        word.text = new_form
+                if not pretagged:
+                    word.upos = '_'
+                    word.feats = '_'
+    nlp = stanza.Pipeline(
+        lang=lang,
+        processors=['tokenize', 'lemma'],
+        use_gpu=True,
+        tokenize_pretokenized=True,
+        lemma_pretagged=True
+        ) if pretagged else stanza.Pipeline(
+            lang=lang,
+            processors=['tokenize', 'pos', 'lemma'],
+            use_gpu=True,
+            tokenize_pretokenized=True
+            )
+    logger.debug("Lemmatisation tagging pipeline prepared, settings: %s", nlp)
+    logger.debug("Called with arguments %s", locals())
+    doc_processed = nlp(doc_for_processing)
+    for sent_idx, sent in enumerate(doc_processed.sentences):
+        for tkn_idx, token in enumerate(sent.tokens):
+            for wrd_idx, word in enumerate(token.words):
+                doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+                if not pretagged:
+                    doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+    pretagging_info = 'gold-pos' if pretagged else 'silver-pos'
+    store_predictions(f"lemmatisation_{pretagging_info}", "stanza", exp_folder, ntpath.basename(input_file_path), doc_processed)
+
+def lemmatise_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams(), pretagged: bool = True) -> None:
+    logger.debug("Called with arguments %s", locals())
+    doc, doc_for_processing = load_input_data(input_file_path)
+    client = load_llm_client(params.api, params.api_key, params.base_url)
+    logger.debug("Lemmatisation pipeline prepared")
+    for sent_idx, sent in enumerate(doc_for_processing.sentences):
+        sent_tokens = [w.text for w in sent.words]
+        sent_tokenised = ' '.join(sent_tokens)
+        words = []
+        prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + ' ' + (w.pos if w.pos is not None and w.pos.strip() else '_') + ' ' + (w.feats if w.feats is not None and w.feats.strip() else '_') +  '\n' for w in sent.words]}\n")
+        logger.info("Prompt is assembled:\n %s", prompt)
+        retries = 0
+        while True:
+            match params.api:
+                case "OpenAI":
+                    try:
+                        ud_schema = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "ud_lemma",
+                                "strict": True,
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        str(w.id): {
+                                        "type": "object",
+                                        "properties": {
+                                            "text": {
+                                                "type": "string",
+                                                "enum": [w.text]
+                                            },
+                                            "lemma": {"type": "string"},
+                                        },
+                                        "required": ["text", "lemma"],
+                                        "additionalProperties":False,
+                                        } for w in sent.words
+                                    },
+                                    "required": [w.id for w in sent.words],
+                                    "additionalProperties": False,
+                                    "minItems": len(sent_tokens),
+                                    "maxItems": len(sent_tokens)
+                                },
+                            }
+                        }
+                        response = client.chat.completions.create(
+                            model=params.model,
+                            messages=[
+                                {"role": "system", "content": ""},
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=params.temperature,
+                            seed=params.seed,
+                            response_format= ud_schema,
+                            stream=False
+                        )
+                        logger.info(f'Response: {response}')
+                        logger.info(f'Message: {response.choices[0].message.content}')
+                        # small models tend to incontrollably generate code blocks 
+                        # designations around the actual output
+                        cleared_content = re.sub(r'```(json)?\n?', '', response.choices[0].message.content)
+                        annotated = json.loads(cleared_content)
+                        if len(annotated) != len(sent.words):
+                            raise ValueError(
+                                f"Token count mismatch: expected {len(sent.words)} from  {sent_tokenised}, "
+                                f"received {len(annotated)}"
+                            )
+                        words = annotated
+                        break
+                    except ValueError as e:
+                        logger.error(f"Invalid LLM output, the error is {e}")
+                        retries = retries + 1
+                        if retries > params.retries:
+                            raise ValueError("Too many retries")
+                        prompt = f"The result of {sent_tokenised} processing was incorrect, there was an exception {e}. Please, re-perform the task, keeping the exception in mind. The task is {params.prompt.format(sent=sent_tokenised)}"
+                        continue
+
+        for tkn_idx, token in enumerate(sent.tokens):
+            for wrd_idx, _ in enumerate(token.words):
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].lemma = words[str(tkn_idx+1)]['lemma']
+                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+                if not pretagged:
+                    doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+    # models usually contain slash in their name ("google/gemma-3en-4b"),
+    # I replace it with underscore
+    model_name = re.sub(r'\/', '_', params.model)
+    pretagging_info = 'gold-pos' if pretagged else 'silver-pos'
+    store_predictions(f"lemmatisation_{pretagging_info}", model_name, exp_folder, ntpath.basename(input_file_path), doc_for_processing)
+
+
+def get_lcss_indices(
+        comparable: str,
+        compared: str,
+        regulate_one: bool = False
+        ) -> tuple[tuple[int, int]]:
+    """
+    Takes two strings and returns a tuple with indices
+    of their first longest common substring
+    from them, with possible regulations for the sequences of length 1.
+
+    Arguments:
+        comparable, compared (str): string to compare. The difference between
+        comparable and compared is crucial, as if comparable contains two LCCs between it
+        and compared, the algorithm returns only the indices of first LCC.
+        regulated_one (bool): if the parameter is true, uses the special set of rules: if both the 
+        sequence do not start with it, ignores LCS. Mostly needed for lemmatisation comparison.
+
+    Returns:
+        tuple[tuple[int, int]]: indices of the longest common substring
+        in both of the compared strings
+    """
+    # here, it is crucial to check
+    comparable_len, compared_len = len(comparable), len(compared)
+    
+    # two-dimensional array, X being length of first string, Y being length of second string
+    iterative_matrix = [[0] * (compared_len + 1) for _ in range(comparable_len + 1)]
+    
+    lcs_length = 0
+    lcs_end_compb = 0
+    lcs_end_compd = 0
+    
+    for i in range(1, comparable_len + 1):
+        for j in range(1, compared_len + 1):
+            # search for the first coinciding symbol
+            if comparable[i-1] == compared[j-1]:
+                # while the symbols coincide,
+                # progressively increment the value of current cs length
+                iterative_matrix[i][j] = iterative_matrix[i-1][j-1] + 1
+                # as soon as it gets bigger than lcs, assign it as lcs 
+                if iterative_matrix[i][j] > lcs_length:
+                    lcs_length = iterative_matrix[i][j]
+                    lcs_end_compb = i
+                    lcs_end_compd = j
+    
+    if lcs_length == 0:
+        return ((-1, -1), (-1, -1))
+    
+    lcs_start_compb = lcs_end_compb - lcs_length
+    lcs_start_compd = lcs_end_compd - lcs_length
+    
+    if regulate_one and lcs_length == 1:
+        compb_starts_wit_lcs = (lcs_start_compb == 0)
+        compd_starts_with_lcs = (lcs_start_compd == 0)
+
+        if not (compb_starts_wit_lcs and compd_starts_with_lcs):
+            return ((-1, -1), (-1, -1))
+        
+    # while returning, subtract 1 from end index, as it is by one bigger than the
+    # actual index
+    return ((lcs_start_compb, lcs_end_compb - 1), (lcs_start_compd, lcs_end_compd - 1))
+
+def show_lemmatiser_error_spots(pred: str, gold: str) -> str:
+    if pred == gold:
+        return '_' * len(gold)
+    lcs_pred_indices = get_lcss_indices(pred, gold, True)[0]
+    pred_to_list = list(pred)
+    if lcs_pred_indices[0] != 0:
+        for i in range(0, lcs_pred_indices[0]):
+            pred_to_list[i] = 'X'
+    for i in range(lcs_pred_indices[0], lcs_pred_indices[1] + 1):
+        pred_to_list[i] = '_'
+    if lcs_pred_indices[1] + 1 < len(pred):
+        for i in range(lcs_pred_indices[1] + 1, len(pred)):
+            pred_to_list[i] = 'X'
+    return ''.join(pred_to_list)
+
+
+def assign_lemma_rapidity(pred: stanza.Document, gold: stanza.Document) -> stanza.Document:
+    for sent_idx, sent in enumerate(pred.sentences):
+        for token_idx, token in enumerate(sent.tokens):
+            for word_idx, word in enumerate(token.words):
+                gold_word = gold.sentences[sent_idx].tokens[token_idx].words[word_idx]
+                rapidity_rate = show_lemmatiser_error_spots(word.lemma, gold_word.lemma)
+                rate_param = f'LemmaErrorSpots={rapidity_rate}|TaggedLemma={word.lemma}'
+                if gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc == None:
+                    gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc = rate_param
+                else:
+                    gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc = gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc + '|' + rate_param
+    return gold
+
+
+def evaluate_lemma(gold_file_path: str, pred_file_path: str, train_result: float, exp_folder: str) -> None:
+    # TODO: the evaluation phase is mostly rehashing of the same code, I really dislike that
+    logger.info("Lemma: starting comparison between %s and %s", gold_file_path, pred_file_path)
+    logger.debug("Called with arguments %s", locals())
+    gold = CoNLL.conll2doc(gold_file_path)
+    labels = collect_labels(gold)["pos"]
+    logger.info("PoS labels are %s", labels)
+    pred = CoNLL.conll2doc(pred_file_path)
+    gold_lemma = []
+    for sent in gold.sentences:
+        for token in sent.tokens:
+            for word in token.words:
+                gold_lemma.append((word.upos, word.lemma))
+    pred_lemma = []
+    for sent in pred.sentences:
+        for token in sent.tokens:
+            for word in token.words:
+                pred_lemma.append((word.upos, word.lemma))
+    # =================================OVERALL ACCURACY============================================================
+    errata_with_correct_pos = [i for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
+    errata_with_incorrect_pos = [i for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
+    all_errata = errata_with_correct_pos + errata_with_incorrect_pos
+    accuracy_score = (len(gold_lemma) - len(all_errata))/len(gold_lemma) * 100
+    logger.info("Accuracy score is %s%%", accuracy_score)
+    if (train_result and train_result >= 0):
+        logger.info('Lemma robustness:  %.2f', robustness_score(train_result, accuracy_score))
+    if (len(all_errata) > 0):
+        correct_pos_errata_share = len(errata_with_correct_pos)/len(all_errata) * 100
+        logger.info("Share of errata, when pos is correct, is %s%%", correct_pos_errata_share)
+        incorrect_pos_errata_share = len(errata_with_incorrect_pos)/len(all_errata) * 100
+        logger.info("Share of errata, when pos is not correct, is %s%%", incorrect_pos_errata_share)
+    #===============================OVERALL LEVENSHTEIN===============================================================
+    levenshtein_with_correct_pos = [lev(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
+    av_leveshtein_with_correct_pos = "-1 (no examples found)" if len(levenshtein_with_correct_pos) == 0 else sum(levenshtein_with_correct_pos)/len(levenshtein_with_correct_pos)
+    logger.info("Average Levenshtein distance, when pos is correct, is %s", av_leveshtein_with_correct_pos)
+    levenshtein_with_incorrect_pos = [lev(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
+    av_leveshtein_with_incorrect_pos = "-1 (no examples found)" if len(levenshtein_with_incorrect_pos) == 0 else sum(levenshtein_with_incorrect_pos)/len(levenshtein_with_incorrect_pos)
+    logger.info("Average Levenshtein distance, when pos is incorrect, is %s", av_leveshtein_with_incorrect_pos)
+    all_levs = levenshtein_with_correct_pos + levenshtein_with_incorrect_pos
+    av_levs = "-1 (no examples found)" if len(all_levs) == 0 else sum(all_levs)/len(all_levs)
+    logger.info("Average Levenshtein distance is %s", av_levs)
+    #===============================OVERALL JARO=======================================================================
+    jw_with_correct_pos = [jw(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
+    av_jw_with_correct_pos = "-1 (no examples found)" if len(jw_with_correct_pos) == 0 else sum(jw_with_correct_pos)/len(jw_with_correct_pos)
+    logger.info("Average Jaro-Winkler distance, when pos is correct, is %s", av_jw_with_correct_pos)
+    jw_with_incorrect_pos = [jw(i[0][1], i[1][1]) for i in zip(gold_lemma, pred_lemma) if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
+    av_jw_with_incorrect_pos = "-1 (no examples found)" if len(jw_with_incorrect_pos) == 0 else sum(jw_with_incorrect_pos)/len(jw_with_incorrect_pos)
+    logger.info("Average Jaro-Winkler distance, when pos is incorrect, is %s", av_jw_with_incorrect_pos)
+    all_jws = jw_with_correct_pos + jw_with_incorrect_pos
+    all_jws = "-1 (no examples found)" if len(all_jws) == 0 else sum(all_jws)/len(all_jws)
+    logger.info("Average Jato-Winkler distance is %s", all_jws)
+    #======================================SCORING BY POS==============================================================
+    for pos in labels:
+        #============================================FILTER============================================================
+        lemma_by_pos = [i for i in zip(gold_lemma, pred_lemma) if i[0][0] == pos]
+        #===========================================ACCURACY===========================================================
+        errata_with_correct_pos = [i for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
+        errata_with_incorrect_pos = [i for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
+        all_errata = errata_with_correct_pos + errata_with_incorrect_pos
+        accuracy_score = (len(lemma_by_pos) - len(all_errata))/len(lemma_by_pos) * 100
+        logger.info("Accuracy score for %s is %s%%", pos, accuracy_score)
+        if (len(all_errata) > 0):
+            correct_pos_errata_share = len(errata_with_correct_pos)/len(all_errata) * 100
+            logger.info("Share of errata, when %s is correct, is %s%%", pos, correct_pos_errata_share)
+            incorrect_pos_errata_share = len(errata_with_incorrect_pos)/len(all_errata) * 100
+            logger.info("Share of errata, when %s is not correct, is %s%%", pos, incorrect_pos_errata_share)
+        #==========================================LEVENSHTEIN=========================================================
+        levenshtein_with_correct_pos = [lev(i[0][1], i[1][1]) for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
+        av_leveshtein_with_correct_pos = "-1 (no examples found)" if len(levenshtein_with_correct_pos) == 0 else sum(levenshtein_with_correct_pos)/len(levenshtein_with_correct_pos)
+        logger.info("Average Levenshtein distance, when %s is correct, is %s", pos, av_leveshtein_with_correct_pos)
+        levenshtein_with_incorrect_pos = [lev(i[0][1], i[1][1]) for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
+        av_leveshtein_with_incorrect_pos = "-1 (no examples found)" if len(levenshtein_with_incorrect_pos) == 0 else sum(levenshtein_with_incorrect_pos)/len(levenshtein_with_incorrect_pos)
+        logger.info("Average Levenshtein distance, when %s is incorrect, is %s", pos, av_leveshtein_with_incorrect_pos)
+        all_levs = levenshtein_with_correct_pos + levenshtein_with_incorrect_pos
+        av_levs = "-1 (no examples found)" if len(all_levs) == 0 else sum(all_levs)/len(all_levs)
+        logger.info("Average Levenshtein distance for %s is %s", pos, av_levs)
+        #==========================================JARO=========================================================
+        jw_with_correct_pos = [jw(i[0][1], i[1][1]) for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] == i[1][0]]
+        av_jw_with_correct_pos = "-1 (no examples found)" if len(jw_with_correct_pos) == 0 else sum(jw_with_correct_pos)/len(jw_with_correct_pos)
+        logger.info("Average Jaro-Winkler distance, when %s is correct, is %s", pos, av_jw_with_correct_pos)
+        jw_with_incorrect_pos = [jw(i[0][1], i[1][1]) for i in lemma_by_pos if i[0][1] != i[1][1] and i[0][0] != i[1][0]]
+        av_jw_with_incorrect_pos = "-1 (no examples found)" if len(jw_with_incorrect_pos) == 0 else sum(jw_with_incorrect_pos)/len(jw_with_incorrect_pos)
+        logger.info("Average Jaro-Winkler distance, when %s is incorrect, is %s", pos, av_jw_with_incorrect_pos)
+        all_jws = jw_with_correct_pos + jw_with_incorrect_pos
+        all_jws = "-1 (no examples found)" if len(all_jws) == 0 else sum(all_jws)/len(all_jws)
+        logger.info("Average Jaro-Winkler distance for %s is %s", pos, all_jws)
+    #==============================================STORE HEAT===================================================
+    gold_with_rapidity = assign_lemma_rapidity(pred, gold)
+    name = ntpath.basename(gold_file_path)
+    file_to_store = os.path.join(exp_folder, f"rapidity_{name}")
+    CoNLL.write_doc2conll(gold_with_rapidity, file_to_store)
+    logger.info("See results of assigned rapidity in %s", file_to_store)
+    logger.info("Lemmatisation evaluation is finished")
+
+    
