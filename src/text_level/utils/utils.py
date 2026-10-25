@@ -8,7 +8,7 @@ def set_logger(folder: str, logger_level: int = 10):
     now = datetime.now()
     date_time = now.strftime("%m-%d-%Y_%H-%M-%S")
     log_handler = FileHandler(filename=os.path.join(folder, f'preprocessor{date_time}.log'), encoding='utf-8')
-    log_formatter = Formatter(fmt="%(asctime)s %(levelname)s: %(message)s",
+    log_formatter = Formatter(fmt="%(asctime)s %(levelname)s %(funcName)s: %(message)s",
                                 datefmt='%Y-%m-%d %H:%M:%S')
     log_handler.setFormatter(log_formatter)
     logger.addHandler(log_handler)

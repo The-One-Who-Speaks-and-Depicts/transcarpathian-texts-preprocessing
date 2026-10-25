@@ -10,7 +10,7 @@ from stanza.models.common.doc import Document
 from stanza.utils.conll import CoNLL
 
 from utils.data_schema import get_pos_schema
-from utils.eval_utils import collect_labels, robustness_score, collect_annotation, AnnotationLabels, prepare_annotation
+from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation
 from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors, transfer_llm_annotation
 from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
 
@@ -172,7 +172,7 @@ def score_for_single_morph_feature(pred: list, true: list, label: str) -> None:
     logger.info("Accuracy for %s is %.2f%s from %s tokens", label, acc*100, "%", len(relevant_tokens))
 
 
-def score_rapidity_rate(pred: any, true: any) -> int:
+def score_pos_rapidity_rate(pred: any, true: any) -> int:
     if pred.upos != true.upos:
         return 7
     if pred.feats == None:
@@ -197,7 +197,7 @@ def assign_pos_rapidity_rate(pred: Document, gold: Document) -> Document:
         for token_idx, token in enumerate(sent.tokens):
             for word_idx, word in enumerate(token.words):
                 gold_word = gold.sentences[sent_idx].tokens[token_idx].words[word_idx]
-                rapidity_rate = score_rapidity_rate(word, gold_word)
+                rapidity_rate = score_pos_rapidity_rate(word, gold_word)
                 rate_param = f'PosRapidity={rapidity_rate}'
                 if gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc == None:
                     gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc = rate_param

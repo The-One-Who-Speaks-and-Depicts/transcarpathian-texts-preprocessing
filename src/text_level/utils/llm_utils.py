@@ -1,9 +1,9 @@
 
 """
-Contains functions that aid in LLM-based annotation,
+Contains functions that aid in LLM-based annotation.
 
 * transfer_llm_annotation (Document, int, Sentence, list, dict): takes a Sentence with an integer
-index in a stanza Document object, and annotates the fields, determined by a corresponding list,
+index in a stanza Document object and annotates the fields, determined by a corresponding list,
 with LLM annotation results, provided through a dictionary that has integers (token indices) 
 as keys and dictionaries for each token as values. The values contain field names as keys and
 suggested annotations as values.
@@ -50,7 +50,7 @@ def load_llm_params(user_params: dict) -> ClientParams:
     logger.info("Input: %s", locals())
     params_set = ClientParams(
         api = user_params["api"] if bool(user_params["api"]) else "OpenAI",
-        api_key = environ.get("API_KEY") if "API_KEY" in environ else "",
+        api_key = environ.get("API_KEY") if "API_KEY" in environ else "not-provided",
         base_url=user_params["base_url"] if bool(user_params["base_url"]) else "http://localhost:1234/v1/",
         model=user_params["model"] if bool(user_params["model"]) else "google/gemma-3en-4b",
         retries=user_params["retries"] if bool(user_params["retries"]) else 3,
@@ -125,8 +125,7 @@ def transfer_llm_annotation(
         a stanza.models.common.doc.Document class
         sent_idx (int): the index of an analysed sentence in the document
         sent (Sentence): the analysed sentence
-        fields_to_annotate (list[str]): a dictionary with CoNLL-U fields as keys and their
-        values
+        fields_to_annotate (list[str]): a list of CoNLL-U fields
         words (dict): a dictionary with LLM-based annotation results, with
         token indices as keys and annotations as values. The annotations are
         dictionaries with fields names as keys, and LLM suggestions for annotation
