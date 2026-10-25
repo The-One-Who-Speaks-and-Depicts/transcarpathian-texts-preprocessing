@@ -7,10 +7,9 @@ from sklearn.metrics import precision_recall_fscore_support
 
 import stanza
 from stanza.models.common.doc import Document
-from stanza.utils.conll import CoNLL
 
 from utils.data_schema import get_pos_schema
-from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation
+from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation, store_rapidity_rate
 from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors, transfer_llm_annotation
 from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
 
@@ -18,7 +17,7 @@ logger = getLogger('preprocessor')
 
 def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk') -> None:
     logger.debug("Called with arguments %s", locals())
-    doc, doc_for_processing = load_input_data(input_file_path)
+    doc, doc_for_processing = load_input_data(input_file_path, True)
     stanza.download(lang)
     nlp = stanza.Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
     logger.debug("Part-of-speech tagging pipeline prepared")
@@ -35,11 +34,13 @@ def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams
         sent_tokens = [w.text for w in sent.words]
         sent_tokenised = ' '.join(sent_tokens)
         prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + '\n' for w in sent.words]}\n")
+        logger.info("Prompt is assembled:\n %s", prompt)
         annotated_sent = {}
         retries = 0
         while True:            
             try:
                 response = {}
+                response_content = None
                 match params.api:
                     case "OpenAI":
                         response = client.chat.completions.create(
@@ -127,7 +128,9 @@ def score_feats_acc(pred: str | None, true: str | None) -> float:
         if k not in pred_items_dict.keys():
             acc_by_feat.append(0)
     logger.debug('Total keys: %s, analysed keys: %s', total_len, len(acc_by_feat))
-    assert len(acc_by_feat) == total_len
+    if len(acc_by_feat) != total_len:
+        raise ValueError("Not all keys are analysed," \
+        f"analysed {acc_by_feat} / {total_len} keys")
     return sum(acc_by_feat)/total_len
 
         
@@ -174,6 +177,14 @@ def score_for_single_morph_feature(pred: list, true: list, label: str) -> None:
 
 def score_pos_rapidity_rate(pred: any, true: any) -> int:
     if pred.upos != true.upos:
+        # Usually there is no more than 5 to 6 morphological features in UD by
+        # a single lexical item, and an error in a part-of-speech is 
+        # of higher level, being more crucial than getting any morphology
+        # wrong (due to morphology features being generally dependent on part-of-speech)
+        # Thus, heat rapidity rate of part-of-speech error should be higher than rapidity rate
+        # for getting all the morphological features incorrect; at the same time, it would be
+        # unjust to punish the model for getting them incorrect as well. This leads to automatically
+        # returning 7 in case of a part-of-speech error.
         return 7
     if pred.feats == None:
         if true.feats == None:
@@ -241,13 +252,6 @@ def eval_feats(gold_morph: list[AnnotationLabels], pred_morph: list[AnnotationLa
         logger.debug('Starting scoring accuracy score for %s', morph)
         score_for_single_morph_feature(pred_morph, gold_morph, morph)
 
-def assign_rapidity_rate(gold: Document, pred: Document, gold_file_path: str, exp_folder: str) -> None:
-    gold_with_rapidity = assign_pos_rapidity_rate(pred, gold)
-    name = basename(gold_file_path)
-    file_to_store = join(exp_folder, f"rapidity_{name}")
-    CoNLL.write_doc2conll(gold_with_rapidity, file_to_store)
-    logger.info("See results of assigned rapidity in %s", file_to_store)
-
 def eval_morphology(
         gold_file_path: str,
         pred_file_path: str,
@@ -270,9 +274,8 @@ def eval_morphology(
         dataset_for_annotation['pred'],
         train_ufeats,
         dataset_for_annotation['labels']['feats']
-        )
-    assign_rapidity_rate(
-        dataset_for_annotation['gold_doc'], dataset_for_annotation['pred_doc'],
-        gold_file_path, exp_folder)
+        )    
+    gold_with_rapidity = assign_pos_rapidity_rate(dataset_for_annotation['pred_doc'], dataset_for_annotation['gold_doc'])
+    store_rapidity_rate(gold_with_rapidity, gold_file_path, exp_folder)
     logger.info("PoS and morphological tagging evaluation is finished")
 

@@ -92,6 +92,7 @@ def process_llm_response(
             f"Token count mismatch: expected {len(sent.words)} from  {sent_tokenised}, "
             f"received {len(annotated)}"
         )
+    return annotated
 
 
 def process_llm_errors(
@@ -148,9 +149,9 @@ def transfer_llm_annotation(
         raise TypeError(f"List of fields has incorrect values, received {fields_to_annotate}")
     if not isinstance(annotation, dict) or not all(
         isinstance(i, int) and (
-            isinstance(j, str) for j in i.keys()
+            isinstance(k, str) for k in annotation[i].keys()
             ) and (
-                isinstance(j, str) for j in list(i.values())
+                isinstance(v, str) for v in list(annotation[i].values())
                 ) for i in annotation.keys() 
     ):
         raise TypeError(f"Incorrect LLM response format, received:\n{annotation}")

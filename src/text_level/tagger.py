@@ -1,6 +1,6 @@
 from logging import getLogger, StreamHandler, Formatter
 import os
-from os.path import isfile
+from os.path import isfile, join, exists
 from sys import stdout
 import argparse
 from dotenv import load_dotenv
@@ -24,6 +24,9 @@ from topic_modelling import perform_topic_modelling
 
 
 def main(args):
+    # Starting with declaring a simple stdout logger to inform the user
+    # of the program execution before the initialisation of the experiment
+    # directory
     logger = getLogger('preprocessor_initialize')
     logger.setLevel(10)
     handler = StreamHandler(stdout)
@@ -33,22 +36,22 @@ def main(args):
     ))
     logger.addHandler(handler)
     load_dotenv()
-    logger.info("Environment is loaded!")
-    config_path = args.config if os.path.exists(args.config) else os.path.join(os.getcwd(), 'config.yaml')
+    logger.debug("Environment is loaded!")
+    config_path = args.config if exists(args.config) else join(os.getcwd(), 'config.yaml')
     if not isfile(config_path):
         raise ValueError("Configuration path %s is not valid", config_path)
     with open(config_path, 'r', encoding='utf-8') as f:
         logger.info("Config is being loaded from %s", config_path)
         config = yaml.safe_load(f)
-    logger.info("Config is loaded successfully")
-    experiments_storage = config["exp_dir"] if "exp_dir" in config.keys() and os.path.exists(config["exp_dir"]) else os.getcwd()
+    logger.debug("Config is loaded successfully")
+    experiments_storage = config["exp_dir"] if "exp_dir" in config.keys() and exists(config["exp_dir"]) else os.getcwd()
     logger.info("Experiment storage set to %s", experiments_storage)
-    exp_dir = os.path.join(experiments_storage, config["exp_name"])
+    exp_dir = join(experiments_storage, config["exp_name"])
     perform_initial_check_config(config)
     create_and_set_storage_directory(exp_dir)
     if not bool(config["tagging_settings"]):
         raise ValueError("No settings for tagging")
-    logger.info("Initial check finished, see further report in %s", exp_dir)    
+    logger.debug("Initial check finished, see further report in %s", exp_dir)
     logger = set_logger(exp_dir)
     logger.debug('Configuration loaded: %s', config)
     if not bool(config["tagging_settings"]):
@@ -71,7 +74,7 @@ def main(args):
         case "pos":
             match phase:
                 case "pred":
-                    if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
+                    if not bool(settings["input_file"]) or not exists(settings["input_file"]):
                         raise ValueError("Input file does not exist")
                     match config["model"]:
                         case "stanza":
@@ -95,7 +98,7 @@ def main(args):
         case "lemma":
             match phase:
                 case "pred":
-                    if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
+                    if not bool(settings["input_file"]) or not exists(settings["input_file"]):
                         raise ValueError("Input file does not exist")
                     if not "pretagged" in settings.keys():
                         logger.warning("Information on tagging not supplied")
@@ -119,7 +122,7 @@ def main(args):
         case "depparse":
             match phase:
                 case "pred":
-                    if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
+                    if not bool(settings["input_file"]) or not exists(settings["input_file"]):
                         raise ValueError("Input file does not exist")
                     if not "pretagged" in settings.keys():
                         logger.warning("Information on tagging not supplied")
@@ -144,7 +147,7 @@ def main(args):
         case "topic":
             match phase:
                 case "pred":
-                    if not bool(settings["input_file"]) or not os.path.exists(settings["input_file"]):
+                    if not bool(settings["input_file"]) or not exists(settings["input_file"]):
                         raise ValueError("Input file does not exist")
                     perform_topic_modelling(settings["input_file"], exp_dir)
                 case "eval":
@@ -153,11 +156,11 @@ def main(args):
             logger.error("Use one of the following:" +
                          "pos for joined part-of-speech and morphological tagging," +
                          "lemma for lemmatisation," +
-                         "deps for syntactic parsing," +
-                         "ner for named entity recognition," +
-                         "swadesh for basic vocabulary detection," +
-                         "topic for thematic modelling," + 
-                         "var for linguistic variation markers"
+                         "deps for syntactic parsing,"# +
+                         # "ner for named entity recognition," +
+                         # "swadesh for basic vocabulary detection," +
+                         # "topic for thematic modelling," + 
+                         # "var for linguistic variation markers"
                          )
             raise ValueError("Stage is set incorrectly, see log for details")
             

@@ -53,7 +53,7 @@ def store_predictions(
     CoNLL.write_doc2conll(doc, file_to_edit)
     logger.info("Edit results of %s in %s", stage_name, file_to_edit)
 
-def load_input_data(input_file_path: str) -> tuple[Document, Document]:
+def load_input_data(input_file_path: str, pretagged: bool = False) -> tuple[Document, Document]:
     logger.info("Input: %s", locals())
     doc = CoNLL.conll2doc(input_file_path)
     doc_for_processing = deepcopy(doc)
@@ -66,6 +66,13 @@ def load_input_data(input_file_path: str) -> tuple[Document, Document]:
                         new_form = sub('\"', '', key)
                         new_form = sub('wf=', '', new_form)
                         word.text = new_form
+                if not pretagged:
+                    if word.upos is None:
+                        word.upos = '_'
+                    if word.feats is None:
+                        word.feats = '_'
+                    if word.lemma is None:
+                        word.lemma = '_'
     logger.debug("%s loaded", input_file_path)
     return doc, doc_for_processing
 
