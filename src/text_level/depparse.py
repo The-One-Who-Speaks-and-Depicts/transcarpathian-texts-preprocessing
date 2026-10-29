@@ -1,27 +1,18 @@
-import logging
-import json
-import re
+from logging import getLogger
 
-import stanza
+from stanza import download, Pipeline
 from stanza.utils.conll import CoNLL
-import ntpath
-from copy import deepcopy
+from ntpath import basename
 
 from stanza.models.common.doc import Document, Sentence, Word
-
-
-
 from zss import Node, simple_distance
 
-from pos import collect_labels, robustness_score
-from utils.llm_utils import ClientParams, load_llm_client
-from utils.tagging_utils import store_predictions, load_input_data
+from utils.data_schema import get_depparse_schema
+from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation
+from utils.llm_utils import ClientParams, load_llm_client, transfer_llm_annotation, process_llm_errors, process_llm_response
+from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
 
-
-
-logger = logging.getLogger('preprocessor')
-
-# TODO: technically, all tagging prediction schema are very similar and can be joined into a single one
+logger = getLogger('preprocessor')
 
 def preprocess_conllu_word_for_depparse(word: Word, pretagged: bool | str) -> str:
     text = word.text
@@ -37,46 +28,26 @@ def preprocess_conllu_word_for_depparse(word: Word, pretagged: bool | str) -> st
 
 def depparse_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk', pretagged: bool = True) -> None:
     logger.debug("Called with arguments %s", locals())
-    name = ntpath.basename(input_file_path)
-    stanza.download(lang)
-    doc = CoNLL.conll2doc(input_file_path)
-    doc_for_procesing = deepcopy(doc)
-    for sent in doc_for_procesing.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                misc_keys = word.misc.split('|')
-                for key in misc_keys:
-                    if 'wf' in key:
-                        new_form = re.sub('\"', '', key)
-                        new_form = re.sub('wf=', '', new_form)
-                        word.text = new_form
-                if not pretagged:
-                    word.upos = '_'
-                    word.feats = '_'
-                    word.lemma = '_'
+    doc, doc_for_processing = load_input_data(input_file_path, pretagged)
+    download(lang)
     logger.debug("%s loaded", input_file_path)
-    nlp = stanza.Pipeline(
+    nlp = Pipeline(
         lang=lang,
         processors=['tokenize', 'depparse'],
         use_gpu=True,
         tokenize_pretokenized=True,
         depparse_pretagged=True
-        ) if pretagged else stanza.Pipeline(
+        ) if pretagged else Pipeline(
             lang=lang,
             processors=['tokenize', 'pos', 'lemma', 'depparse'],
             use_gpu=True,
             tokenize_pretokenized=True
             )
     logger.debug("Dependency parsing pipeline prepared, settings: %s", nlp)
-    doc_processed = nlp(doc_for_procesing)
-    for sent_idx, sent in enumerate(doc_processed.sentences):
-        for tkn_idx, token in enumerate(sent.tokens):
-            for wrd_idx, word in enumerate(token.words):
-                doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-                if not pretagged:
-                    doc_processed.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+    doc_processed = nlp(doc_for_processing)
+    doc_processed = restore_original_tags(doc_processed, doc, pretagged)
     pretagging_info = 'gold' if pretagged else 'silver'
-    store_predictions(f"depparse_{pretagging_info}", "stanza", exp_folder, ntpath.basename(input_file_path), doc_processed)
+    store_predictions(f"depparse_{pretagging_info}", "stanza", exp_folder, basename(input_file_path), doc_processed)
 
 def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams(), pretagged: bool | str = True) -> None:
     logger.debug("Called with arguments %s", locals())
@@ -86,7 +57,6 @@ def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParam
     for sent_idx, sent in enumerate(doc_for_processing.sentences):
         sent_tokens = [w.text for w in sent.words]
         sent_tokenised = ' '.join(sent_tokens)
-        words = []
         prompt = params.prompt.format(
             sent=f"{sent_tokenised}\nTokens:\n{
                 '\n'.join(
@@ -101,56 +71,14 @@ def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParam
                 }"
             )
         logger.info("Prompt is assembled:\n %s", prompt)
+        annotated_sent = {}
         retries = 0
         while True:
-            match params.api:
-                case "OpenAI":
-                    try:
-                        ids = [w.id for w in sent.words]
-                        ids_with_root = [w.id for w in sent.words]
-                        ids_with_root.append(0)
-                        ud_schema = {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": "ud_deprel",
-                                "strict": True,
-                                "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        str(w.id): {
-                                        "type": "object",
-                                        "properties": {
-                                            "text": {
-                                                "type": "string",
-                                                "enum": [w.text],
-                                            },
-                                            "head": {
-                                                "type": "integer", 
-                                                "enum": [
-                                                    id for id in ids_with_root if id != w.id 
-                                                    ],
-                                            },
-                                            "deprel": {
-                                                "type": "string",
-                                                "pattern": (
-                                                    r"^(?:acl|advcl|advmod|amod|appos|aux|case|cc|"
-                                                    r"ccomp|clf|compound|conj|cop|csubj|dep|det|"
-                                                    r"discourse|dislocated|expl|fixed|flat|goeswith|"
-                                                    r"iobj|list|mark|nmod|nsubj|nummod|obj|obl|"
-                                                    r"orphan|parataxis|punct|reparandum|root|"
-                                                    r"vocative|xcomp)(?::[A-Za-z0-9_-]+)?$"
-                                                )
-                                            }
-                                        },
-                                        "required": ["text", "head", "deprel"],
-                                        "additionalProperties":False,
-                                        } for w in sent.words
-                                    },
-                                    "required": [str(id) for id in ids],
-                                    "additionalProperties": False,
-                                },
-                            }
-                        }
+            try:
+                response = None
+                response_content = None
+                match params.api:
+                    case "OpenAI":           
                         response = client.chat.completions.create(
                             model=params.model,
                             messages=[
@@ -159,38 +87,36 @@ def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParam
                             ],
                             temperature=params.temperature,
                             seed=params.seed,
-                            response_format= ud_schema,
+                            response_format= get_depparse_schema(sent),
                             stream=False
                         )
-                        logger.info(f'Response: {response}')
-                        logger.info(f'Message: {response.choices[0].message.content}')
-                        # small models tend to incontrollably generate code blocks 
-                        # designations around the actual output
-                        cleared_content = re.sub(r'```(json)?\n?', '', response.choices[0].message.content)
-                        annotated = json.loads(cleared_content)
-                        if len(annotated) != len(sent.words):
-                            raise ValueError(
-                                f"Token count mismatch: expected {len(sent.words)} from  {sent_tokenised}, "
-                                f"received {len(annotated)}"
-                            )
-                        words = annotated
-                        break
-                    except ValueError as e:
-                        logger.error(f"Invalid LLM output, the error is {e}")
-                        retries = retries + 1
-                        if retries > params.retries:
-                            raise ValueError("Too many retries")
-                        original_prompt = prompt
-                        prompt = f"Original prompt: {original_prompt}. Prompt processing was incorrect, there was an exception {e}. Please, re-perform the task, keeping the exception in mind."
-                        continue
+                        response_content = response.choices[0].messsage.content
+                    case _:
+                        raise AttributeError(f"Invalid LLM call API type, received {params.api}")
+                annotated_sent = process_llm_response(
+                    sent,
+                    sent_tokenised,
+                    response,
+                    response_content
+                    )
+                break
+            except ValueError as e:
+                retries, prompt = process_llm_errors(
+                    e,
+                    retries, params.retries,
+                    sent_tokenised,
+                    params.prompt.format(sent=sent_tokenised)
+                    )
+                continue
 
-        for tkn_idx, token in enumerate(sent.tokens):
-            for wrd_idx, _ in enumerate(token.words):
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].head = words[str(tkn_idx+1)]['head']
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].deprel = words[str(tkn_idx+1)]['deprel']
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = doc.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
-                if not pretagged:
-                    doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+        doc_for_processing = transfer_llm_annotation(
+            doc_for_processing,
+            sent_idx,
+            sent,
+            ['lemma'],
+            annotated_sent
+        )
+    doc_for_processing = restore_original_tags(doc_for_processing, doc, pretagged)
     pretagging_info = None
     match pretagged:
         case 'detokenised':
@@ -199,18 +125,15 @@ def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParam
             pretagging_info = 'gold'
         case _:
             pretagging_info = 'silver'
-    # models usually contain slash in their name ("google/gemma-3en-4b"),
-    # I replace it with underscore
-    model_name = re.sub(r'\/', '_', params.model)
     pretagging_info = 'gold-pos' if pretagged else 'silver-pos'
-    store_predictions(f"lemmatisation_{pretagging_info}", model_name, exp_folder, ntpath.basename(input_file_path), doc_for_processing)
+    store_predictions(f"lemmatisation_{pretagging_info}", params.model, exp_folder, basename(input_file_path), doc_for_processing)
 
 
 def conllu_to_zss_node(sent: Sentence) -> Node | None:
     node_map = {}
     for token in sent.tokens:
         for word in token.words:
-            node_name = "%s_%s" % (word.text, word.id)
+            node_name = f"{word.text}_{word.id}"
             node = Node(node_name)
             node_map[word.id] = node    
     for token in sent.tokens:
@@ -228,20 +151,20 @@ def conllu_to_zss_node(sent: Sentence) -> Node | None:
                 root_id = word.id
     return node_map[root_id] if root_id else None
 
-def check_correct_morphology_and_lemma(g: tuple[str, str, str, str, str], p: tuple[str, str, str, str, str]) -> bool:
-    return g[0] == p[0] and g[1] == p[1] and g[2] == p[2]
+def check_correct_morphology_and_lemma(g: tuple[list[AnnotationLabels]], p: tuple[list[AnnotationLabels]]) -> bool:
+    return g.pos == p.pos and g.feats == p.feats and g.lemma == p.lemma
 
 
 def score_uas_and_las(
-        gold_deps: tuple[str, str, str, str, str],
-        pred_deps: tuple[str, str, str, str, str],
+        gold_deps: tuple[list[AnnotationLabels]],
+        pred_deps: tuple[list[AnnotationLabels]],
         data_part: str = "in dataset",
         gold_uas: float = -1,
         gold_las: float = -1) -> None:
     total = len(gold_deps)
     # ======================================================== TOTAL ACCURACY ======================================================================
-    uas = sum(1 for g, p in zip(gold_deps, pred_deps) if g[3] == p[3])
-    las = sum(1 for g, p in zip(gold_deps, pred_deps) if g[3] == p[3] and g[4] == p[4])
+    uas = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head)
+    las = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and g.deprel == p.deprel)
     uas_score = uas/total * 100 if total > 0 else 0
     logger.info("UAS %s: %.2f%%", data_part, uas_score)
     if (gold_uas >= 0):
@@ -258,17 +181,17 @@ def score_uas_and_las(
     correct_share = total_correct_tagging/total * 100 if total > 0 else 0
     logger.info("Share of correctly morphologically tagged items %s is %.2f%%", data_part, correct_share)
     # ====================================================== ASSESSING ITEMS WITH CORRECT MORPHOLOGY ================================================
-    uas_with_correct_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g[3] == p[3] and check_correct_morphology_and_lemma(g,p))
+    uas_with_correct_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and check_correct_morphology_and_lemma(g,p))
     uas_with_correct_tagging_share = uas_with_correct_tagging/total_correct_tagging * 100 if total_correct_tagging > 0 else 0
     logger.info("Share of correctly syntactically tagged items %s among correctly morphologically tagged items is %.2f%%", data_part, uas_with_correct_tagging_share)
-    las_with_correct_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g[3] == p[3] and g[4] == p[4] and check_correct_morphology_and_lemma(g,p))
+    las_with_correct_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and g.deprel == p.deprel and check_correct_morphology_and_lemma(g,p))
     las_with_correct_tagging_share = las_with_correct_tagging/total_correct_tagging * 100 if total_correct_tagging > 0 else 0
     logger.info("Share of correctly syntactically tagged items %s among correctly morphologically tagged items is %.2f%%", data_part, las_with_correct_tagging_share)
     # ====================================================== ASSESSING ITEMS WITH INCORRECT MORPHOLOGY ================================================
-    uas_with_incorrect_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g[3] == p[3] and not check_correct_morphology_and_lemma(g,p))
+    uas_with_incorrect_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and not check_correct_morphology_and_lemma(g,p))
     uas_with_incorrect_tagging_share = uas_with_incorrect_tagging/total_incorrect_tagging * 100 if total_incorrect_tagging > 0 else 0
     logger.info("Share of correctly syntactically tagged items %s among incorrectly morphologically tagged items is %.2f%%", data_part, uas_with_incorrect_tagging_share)
-    las_with_incorrect_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g[3] == p[3] and g[4] == p[4] and not check_correct_morphology_and_lemma(g,p))
+    las_with_incorrect_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and g.deprel == p.deprel and not check_correct_morphology_and_lemma(g,p))
     las_with_incorrect_tagging_share = las_with_incorrect_tagging/total_incorrect_tagging * 100 if total_incorrect_tagging > 0 else 0
     logger.info("Share of correctly syntactically tagged items %s among incorrectly morphologically tagged items is %.2f%%", data_part, las_with_incorrect_tagging_share)
 
@@ -349,36 +272,20 @@ def score_cp_metrics(gold: Document, pred: Document) -> None:
 def evaluate_depparse(gold_file_path: str, pred_file_path: str, gold_uas: float, gold_las: float) -> None:
     logger.info("Dependency parsing: starting comparison between %s and %s", gold_file_path, pred_file_path)
     # ====================================================== LOADING DATA =================================================================
-    gold = CoNLL.conll2doc(gold_file_path)
-    labels = collect_labels(gold)
-    pos_labels = labels["pos"]
+    dataset_for_annotation = prepare_annotation(gold_file_path, pred_file_path)
+    pos_labels = dataset_for_annotation.labels["pos"]
     logger.info("PoS labels are %s", pos_labels)
-    deprel_labels = labels["deprel"]
+    deprel_labels = dataset_for_annotation.labels["deprel"]
     logger.info("Syntactic labels are %s", deprel_labels)
-    pred = CoNLL.conll2doc(pred_file_path)
-    gold_deps = []
-    for sent in gold.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                feats = word.feats if word.feats is not None else '_'
-                deprel = word.deprel  if word.deprel is not None else '_'
-                gold_deps.append((word.upos, word.lemma, feats, word.head, deprel))
-    pred_deps = []
-    for sent in pred.sentences:
-        for token in sent.tokens:
-            for word in token.words:
-                feats = word.feats if word.feats is not None else '_'
-                deprel = word.deprel  if word.deprel is not None else '_'
-                pred_deps.append((word.upos, word.lemma, feats, word.head, deprel))
     # ================================================ DOCUMENT-SPAN METRICS =====================================================================
-    ted_distances = [simple_distance(conllu_to_zss_node(sent1), conllu_to_zss_node(sent2)) for sent1, sent2 in zip(gold.sentences, pred.sentences)]
+    ted_distances = [simple_distance(conllu_to_zss_node(sent1), conllu_to_zss_node(sent2)) for sent1, sent2 in zip(dataset_for_annotation.gold_doc.sentences, dataset_for_annotation.pred_doc.sentences)]
     ted = sum(ted_distances)/len(ted_distances)
     logger.info("Average tree edit distance is %.2f", ted)
-    score_uas_and_las(gold_deps, pred_deps, gold_uas=gold_uas, gold_las=gold_las)
-    score_cp_metrics(gold, pred)
+    score_uas_and_las(dataset_for_annotation.gold, dataset_for_annotation.pred, gold_uas=gold_uas, gold_las=gold_las)
+    score_cp_metrics(dataset_for_annotation.gold_doc, dataset_for_annotation.pred_doc)
     # ======================================= FINE-GRAINED: PoS + deprel==========================================================================
     for deprel_label in deprel_labels:
-        gold_and_pred_with_deprel = [i for i in zip(gold_deps, pred_deps) if i[0][4] == deprel_label]
+        gold_and_pred_with_deprel = [i for i in zip(dataset_for_annotation.gold, dataset_for_annotation.pred) if i[0][4] == deprel_label]
         gold_filtered = [i[0] for i in gold_and_pred_with_deprel]
         pred_filtered = [i[1] for i in gold_and_pred_with_deprel]
         data_part = "for " + deprel_label

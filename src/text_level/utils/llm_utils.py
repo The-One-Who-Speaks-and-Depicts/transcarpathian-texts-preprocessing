@@ -7,6 +7,12 @@ index in a stanza Document object and annotates the fields, determined by a corr
 with LLM annotation results, provided through a dictionary that has integers (token indices) 
 as keys and dictionaries for each token as values. The values contain field names as keys and
 suggested annotations as values.
+* process_llm_errors (Exception, int, int, str, str) -> tuple[int, str]:
+takes data for error processing, returns updated retries counter and prompt.
+* process_llm_response(Sentence, list[str], dict, str) -> dict: takes a sentence and its tokens,
+alongside with the whole response of an LLM and its text content, to partailly clean it,
+perform a preliminary check on correctness and parse it into a JSON object
+that the code down the line may use to annotate the data. 
 """
 from copy import deepcopy
 from dataclasses import dataclass
@@ -81,8 +87,35 @@ def load_llm_client(api: str, key: str, url: str) -> OpenAI:
 def process_llm_response(
         sent: Sentence, sent_tokenised: list[str], response: dict, response_content: str
         ) -> dict:
-    logger.info(f'Response: {response}')
-    logger.info(f'Message: {response_content}')
+    """
+    Transforms data that an LLM annotated, alongside with its full response
+    and the text content of this response that contains the annotation the LLM performed
+    into a dictionary that contains annotation in the structured format.
+
+    Params:
+        sent (Sentence): a CoNLL-U sentence
+        sent_tokenised (list[str]): a list of tokens from the sentence
+        response (dict): a full LLM response
+        response_content (str): a text part of an LLM response
+    
+    Returns:
+        dict: a dictionary with each item representing a token from the original sentence,
+        its id being a key, and its LLM-performed annotation being a value dictionary,
+        with annotated CoNLL-U fields ("pos", "feats", "lemma", "head", "deprel") as keys
+        and LLM predictions as values
+    """
+    if not isinstance(sent, Sentence):
+        raise TypeError(f"sent is not a CoNLL-U sentence in Stanza format, received {sent}")
+    if not isinstance(sent_tokenised, list) or not all(
+        isinstance(i, str) for i in sent_tokenised
+    ):
+        raise TypeError(f"sent_tokenised should be a list of strings, received {sent_tokenised}")
+    if not isinstance(response, dict):
+        raise TypeError(f"LLM response should be a dictionary, received {response}")
+    if not isinstance(response_content, str):
+        raise TypeError(f"LLM text response should be a string, received {response_content}")
+    logger.debug('LLM response for %s:\n%s', sent, response) 
+    logger.debug('LLM annotation for tokens %s:\n%s', sent_tokenised, response_content)
     # small models tend to incontrollably generate code blocks 
     # designations around the actual output
     cleared_content = sub(r'```(json)?\n?', '', response_content)
@@ -92,6 +125,7 @@ def process_llm_response(
             f"Token count mismatch: expected {len(sent.words)} from  {sent_tokenised}, "
             f"received {len(annotated)}"
         )
+    logger.debug("LLM response processed correctly")
     return annotated
 
 
@@ -100,14 +134,34 @@ def process_llm_errors(
         retries: int,
         max_retries: int,
         sent_tokenised: str,
-        renewed_prompt: str
+        original_prompt: str
         ) -> tuple[int, str]:
+    """
+    Takes the information on the LLM error and its processing to update prompt
+    and retries counter.
+
+    Params:
+        e (Exception): the received exception, usually a ValueError
+        retries (int): the current value of the counter that scores how many times
+        an LLM attempted to perform the task
+        max_retries (int): the maximum possible value of the counter that scores how many times
+        an LLM attempted to perform the task
+        sent_tokenised (str): a tokenised sentence
+        original_prompt (str): a prompt used in the previous run
+
+    Returns:
+        int: an updated counter that scores how many times
+        an LLM attempted to perform the task
+        str: a prompt updated given the received exception
+    """
     logger.error(f"Invalid LLM output, the error is {e}")
     retries = retries + 1
     if retries > max_retries:
         raise ValueError("Too many retries")
-    prompt = f"The result of {sent_tokenised} processing was incorrect, there was an exception {e}. Please, re-perform the task, keeping the exception in mind. The task is {renewed_prompt}"
-    logger.info("Retry: %s\nPrompt:\n%s", retries, prompt)
+    prompt = f"The result of {sent_tokenised} processing was incorrect, " \
+    f"there was an exception {e}." \
+    f"Please, re-perform the task, keeping the exception in mind. The task is {original_prompt}"
+    logger.debug("Retry: %s out of %s, \nPrompt:\n%s", retries, max_retries, prompt)
     return retries, prompt
 
 def transfer_llm_annotation(

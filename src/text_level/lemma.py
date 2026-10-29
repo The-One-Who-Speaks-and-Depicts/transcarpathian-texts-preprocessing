@@ -4,7 +4,8 @@ from ntpath import basename
 
 from collections.abc import Callable
 
-import stanza
+from stanza import download, Pipeline
+from stanza.models.common.doc import Document
 from Levenshtein import distance as lev
 from pyjarowinkler.distance import get_jaro_distance as jw
 
@@ -18,15 +19,15 @@ logger = getLogger('preprocessor')
 
 def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk', pretagged: bool = True):
     doc, doc_for_processing = load_input_data(input_file_path)    
-    stanza.download(lang)
+    download(lang)
     doc, doc_for_processing = load_input_data(input_file_path, pretagged)
-    nlp = stanza.Pipeline(
+    nlp = Pipeline(
         lang=lang,
         processors=['tokenize', 'lemma'],
         use_gpu=True,
         tokenize_pretokenized=True,
         lemma_pretagged=True
-        ) if pretagged else stanza.Pipeline(
+        ) if pretagged else Pipeline(
             lang=lang,
             processors=['tokenize', 'pos', 'lemma'],
             use_gpu=True,
@@ -116,7 +117,7 @@ def show_lemmatiser_error_spots(pred: str, gold: str) -> str:
     return ''.join(pred_to_list)
 
 
-def assign_lemma_rapidity(pred: stanza.Document, gold: stanza.Document) -> stanza.Document:
+def assign_lemma_rapidity(pred: Document, gold: Document) -> Document:
     for sent_idx, sent in enumerate(pred.sentences):
         for token_idx, token in enumerate(sent.tokens):
             for word_idx, word in enumerate(token.words):

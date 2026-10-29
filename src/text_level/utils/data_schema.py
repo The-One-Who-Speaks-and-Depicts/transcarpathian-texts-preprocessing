@@ -7,6 +7,9 @@ for morphological tagging (including both UPOS and feats detection)
 * get_lemma_schema (stanza.models.common.doc.Sentence, list[str] -> dict):
 takes a CoNLL-U sentence and a list of its tokens, and returns a schema
 for lemmatisation
+* get_depparse_schema (stanza.models.common.doc.Sentence -> dict):
+takes a CoNLL-U sentence and returns a schema
+for dependency parsing
 """
 
 from logging import getLogger
@@ -28,7 +31,7 @@ def get_pos_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
         dict: a JSON schema that one can afterwards feed to the annotating LLM
         and which constraints its output to the exact same tokens it received, 
         annotated with the exact set of universal part-of-speech tag and the set of 
-        morphological features, determined by the model, but hinted at the prompt.
+        morphological features, determined by the model, but hinted at the prompt
     """
     logger.info('Input: %s', locals())
     schema = {
@@ -39,7 +42,7 @@ def get_pos_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
             "schema": {
                 "type": "object",
                 "properties": {
-                    str(w.id): {
+                    w.id: {
                     "type": "object",
                     "properties": {
                         "text": {
@@ -55,7 +58,7 @@ def get_pos_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
                         "feats": {"type": "string"}
                     },
                     "required": ["text", "upos", "feats"],
-                    "additionalProperties":False,
+                    "additionalProperties": False,
                     } for w in sent.words
                 },
                 "required": [w.id for w in sent.words],
@@ -81,7 +84,7 @@ def get_lemma_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
     Returns:
         dict: a JSON schema that one can afterwards feed to the annotating LLM
         and which constraints its output to the exact same tokens it received, 
-        annotated with the lemmatisation, determined by the model, hinted at the prompt.
+        annotated with the lemmatisation, determined by the model, hinted at the prompt
     """
     logger.info("Input: %s", locals())
     schema = {
@@ -92,7 +95,7 @@ def get_lemma_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
             "schema": {
                 "type": "object",
                 "properties": {
-                    str(w.id): {
+                    w.id: {
                     "type": "object",
                     "properties": {
                         "text": {
@@ -102,13 +105,76 @@ def get_lemma_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
                         "lemma": {"type": "string"},
                     },
                     "required": ["text", "lemma"],
-                    "additionalProperties":False,
+                    "additionalProperties": False,
                     } for w in sent.words
                 },
                 "required": [w.id for w in sent.words],
                 "additionalProperties": False,
                 "minItems": len(sent_tokens),
                 "maxItems": len(sent_tokens)
+            },
+        }
+    }
+    logger.info("Generated schema:\n%s", schema)
+    return schema
+
+
+def get_depparse_schema(sent: Sentence) -> dict:
+    """
+    Returns a schema for lemmatisation, based on the provided 
+    sentence and its tokens.
+    
+    Params:
+        sent (stanza.models.common.doc.Sentence): a CoNLL-U sentence to annotate
+    
+    Returns:
+        dict: a JSON schema that one can afterwards feed to the annotating LLM
+        and which constraints its output to the exact same tokens it received, 
+        annotated with the lemmatisation, determined by the model, hinted at the prompt
+    """
+    logger.info("Input: %s", locals())
+    ids = [w.id for w in sent.words]
+    ids_with_root = [w.id for w in sent.words]
+    ids_with_root.append(0)
+    schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "ud_deprel",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    w.id: {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "enum": [w.text],
+                        },
+                        "head": {
+                            "type": "integer", 
+                            "enum": [
+                                id for id in ids_with_root if id != w.id 
+                                ],
+                        },
+                        "deprel": {
+                            "type": "string",
+                            "pattern": (
+                                r"^(?:acl|advcl|advmod|amod|appos|aux|case|cc|"
+                                r"ccomp|clf|compound|conj|cop|csubj|dep|det|"
+                                r"discourse|dislocated|expl|fixed|flat|goeswith|"
+                                r"iobj|list|mark|nmod|nsubj|nummod|obj|obl|"
+                                r"orphan|parataxis|punct|reparandum|root|"
+                                r"vocative|xcomp)(?::[A-Za-z0-9_-]+)?$"
+                            )
+                        }
+                    },
+                    "required": ["text", "head", "deprel"],
+                    "additionalProperties": False,
+                    } for w in sent.words
+                },
+                "required": [id for id in ids],
+                "additionalProperties": False,
             },
         }
     }

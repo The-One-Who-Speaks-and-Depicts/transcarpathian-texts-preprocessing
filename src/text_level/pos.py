@@ -5,7 +5,7 @@ from pathlib import Path
 
 from sklearn.metrics import precision_recall_fscore_support
 
-import stanza
+from stanza import download, Pipeline
 from stanza.models.common.doc import Document
 
 from utils.data_schema import get_pos_schema
@@ -18,8 +18,8 @@ logger = getLogger('preprocessor')
 def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk') -> None:
     logger.debug("Called with arguments %s", locals())
     doc, doc_for_processing = load_input_data(input_file_path, True)
-    stanza.download(lang)
-    nlp = stanza.Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
+    download(lang)
+    nlp = Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
     logger.debug("Part-of-speech tagging pipeline prepared")
     doc_processed = nlp(doc_for_processing)
     doc_processed = restore_original_tags(doc_processed, doc, pretagged = False)

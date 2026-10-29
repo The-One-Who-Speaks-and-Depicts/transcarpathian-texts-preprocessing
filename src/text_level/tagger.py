@@ -1,12 +1,12 @@
-from logging import getLogger, StreamHandler, Formatter
-import os
-from os.path import isfile, join, exists
-from sys import stdout
-import argparse
+from argparse import ArgumentParser
 from dotenv import load_dotenv
 
-import yaml
+from logging import getLogger, StreamHandler, Formatter
+from os import getcwd
+from os.path import isfile, join, exists
+from sys import stdout
 
+from yaml import safe_load
 
 from corpus_distance.pipeline import create_and_set_storage_directory
 
@@ -37,14 +37,14 @@ def main(args):
     logger.addHandler(handler)
     load_dotenv()
     logger.debug("Environment is loaded!")
-    config_path = args.config if exists(args.config) else join(os.getcwd(), 'config.yaml')
+    config_path = args.config if exists(args.config) else join(getcwd(), 'config.yaml')
     if not isfile(config_path):
         raise ValueError("Configuration path %s is not valid", config_path)
     with open(config_path, 'r', encoding='utf-8') as f:
         logger.info("Config is being loaded from %s", config_path)
-        config = yaml.safe_load(f)
+        config = safe_load(f)
     logger.debug("Config is loaded successfully")
-    experiments_storage = config["exp_dir"] if "exp_dir" in config.keys() and exists(config["exp_dir"]) else os.getcwd()
+    experiments_storage = config["exp_dir"] if "exp_dir" in config.keys() and exists(config["exp_dir"]) else getcwd()
     logger.info("Experiment storage set to %s", experiments_storage)
     exp_dir = join(experiments_storage, config["exp_name"])
     perform_initial_check_config(config)
@@ -156,10 +156,10 @@ def main(args):
             logger.error("Use one of the following:" +
                          "pos for joined part-of-speech and morphological tagging," +
                          "lemma for lemmatisation," +
-                         "deps for syntactic parsing,"# +
+                         "deps for syntactic parsing," +
                          # "ner for named entity recognition," +
                          # "swadesh for basic vocabulary detection," +
-                         # "topic for thematic modelling," + 
+                         "topic for thematic modelling,"# + 
                          # "var for linguistic variation markers"
                          )
             raise ValueError("Stage is set incorrectly, see log for details")
@@ -168,7 +168,7 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = ArgumentParser()
     parser.add_argument('--config', '-c', help='Path to config.yaml file')
     args = parser.parse_args()
     main(args)

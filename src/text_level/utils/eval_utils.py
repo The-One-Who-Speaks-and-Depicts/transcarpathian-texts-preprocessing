@@ -53,12 +53,14 @@ def collect_labels(doc: Document) -> dict:
     for sent in doc.sentences:
         for token in sent.tokens:
             for word in token.words:
-                result['pos'].append(word.upos)
-                if word.feats:
+                if hasattr(word, 'pos'):
+                    result['pos'].append(word.upos)
+                if hasattr(word, 'feats'):
                     result['feats'].extend(
                         [i.split('=')[0] for i in word.feats.split('|') if i and i.strip()]
                         )
-                result['deprel'].append(word.deprel)
+                if hasattr(word, 'deprel'):
+                    result['deprel'].append(word.deprel)
     result['pos'] = list(set(result['pos']))
     result['feats'] = list(set(result['feats']))
     result['deprel'] = list(set(result['deprel']))
