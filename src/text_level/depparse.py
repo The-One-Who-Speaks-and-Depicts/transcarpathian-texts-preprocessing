@@ -175,7 +175,7 @@ def score_uas_and_las(
     if (gold_las >= 0):
         robustness_las = robustness_score(las_score, gold_las)
         logger.info("LAS robustness %s: %.2f", data_part, robustness_las)
-    # ======================================================= ASSESSING PREVIOUS TAGGING ===========================================================
+    # ===================================================== ASSESSING PREVIOUS TAGGING ===========================================================
     total_correct_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if check_correct_morphology_and_lemma(g,p))
     total_incorrect_tagging = total - total_correct_tagging
     correct_share = total_correct_tagging/total * 100 if total > 0 else 0

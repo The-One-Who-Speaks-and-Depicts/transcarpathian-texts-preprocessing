@@ -2,9 +2,12 @@
 """
 Contains functions that aid in LLM-based annotation.
 
-* transfer_llm_annotation (Document, int, Sentence, list, dict): takes a Sentence with an integer
-index in a stanza Document object and annotates the fields, determined by a corresponding list,
-with LLM annotation results, provided through a dictionary that has integers (token indices) 
+* load_llm_params (dict) -> ClientParams: checks the initial configuration
+for the specific parameters to run an LLM with, inserting the default ones where possible
+* transfer_llm_annotation (Document, int, Sentence, list, dict) -> Document: 
+takes a Sentence with an integer index in a stanza Document object and annotates the fields,
+determined by a corresponding list, with LLM annotation results,
+provided through a dictionary that has integers (token indices) 
 as keys and dictionaries for each token as values. The values contain field names as keys and
 suggested annotations as values.
 * process_llm_errors (Exception, int, int, str, str) -> tuple[int, str]:
@@ -52,8 +55,21 @@ def load_prompt(user_params: dict) -> str:
     return default_prompt
             
 
-def load_llm_params(user_params: dict) -> ClientParams:
+def load_llm_params(settings: dict) -> ClientParams:
+    """
+    Takes an experiment configuration object and returns an LLM client parameters object.
+
+    Params:
+        settings (dict): an experiment configuration object, provided by a user
+
+    Returns:
+        ClientParams: a ClientParams object that stores a set of parameters that 
+        regulate an LLM run in the experiment for the reproducibility purposes
+    """
     logger.info("Input: %s", locals())
+    if not bool(settings["llm_params"]):
+        raise ValueError("LLM parameters not given")
+    user_params = settings["llm_params"]
     params_set = ClientParams(
         api = user_params["api"] if bool(user_params["api"]) else "OpenAI",
         api_key = environ.get("API_KEY") if "API_KEY" in environ else "not-provided",

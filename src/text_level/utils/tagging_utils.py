@@ -15,24 +15,13 @@ Returns the annotated document with restored annotation.
 from copy import deepcopy
 from logging import getLogger
 from os import PathLike
-from os.path import isfile, join
+from os.path import join
 from re import sub
 
 from stanza.models.common.doc import Document
 from stanza.utils.conll import CoNLL
 
 logger = getLogger('preprocessor')
-
-def check_eval_parameters(settings: dict) -> None:
-    if not bool(settings["pred_file"]) or not isfile(settings["pred_file"]):
-        raise ValueError(f"File with predictions does not exist, received {settings['pred_file']}")
-    if not bool(settings["gold_file"]) or not isfile(settings["gold_file"]):
-        raise ValueError(f"File with gold annotation does not exist" \
-                         f", received {settings['gold_file']}")
-    logger.info("The evaluation parameters successfully checked; " \
-    "checking predictions in %s against gold annotation in %s",
-    settings["pred_file"], settings["gold_file"])
-
 
 
 def store_predictions(

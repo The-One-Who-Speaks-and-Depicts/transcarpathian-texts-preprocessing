@@ -2,6 +2,8 @@
 Contains utility functions that may occur to be useful different
 evaluation procedures.
 
+*check_eval_parameters_by_stage (dict, str) -> dict: checks, whether the provided
+evaluation parameters are correct, amending, if possible.
 * collect_labels (stanza.models.common.doc) -> dict: gathers a 
 dictionary with unique morphosyntactic tags from the Stanza Document object. 
 * robustness_score (Number, Number, Number) -> Number: evalutes the ability of a model
@@ -21,7 +23,7 @@ the equality of two strings.
 from logging import getLogger
 from ntpath import basename
 from numbers import Number
-from os.path import join
+from os.path import join, isfile
 from typing import NamedTuple
 
 from collections.abc import Callable
@@ -31,6 +33,37 @@ from stanza.models.common.doc import Document
 from stanza.utils.conll import CoNLL
 
 logger = getLogger('preprocessor')
+
+
+def check_eval_parameters_by_stage(settings: dict, stage: str) -> dict:
+    """
+    Performs the initial check on the evaluation parameters in the configuration file,
+    provided by a user. In case there is no information provided, attempts to amend,
+    assigning default values (only in case of the previous evaluation).
+
+    Params:
+        settings (dict): an experiment configuration object, provided by a user
+        stage (str): shows a type of annotation
+    
+    Returns:
+        dict: an experiment configuration object, either amended by a function, or preserved as is
+    """
+    if not bool(settings["pred_file"]) or not isfile(settings["pred_file"]):
+        raise ValueError(f"File with predictions does not exist, received {settings['pred_file']}")
+    if not bool(settings["gold_file"]) or not isfile(settings["gold_file"]):
+        raise ValueError(f"File with gold annotation does not exist" \
+                         f", received {settings['gold_file']}")
+    logger.info("The evaluation parameters successfully checked; " \
+    "checking predictions in %s against gold annotation in %s",
+    settings["pred_file"], settings["gold_file"])
+    if not "train_class" in settings.keys() or not bool(settings["train_class"]) or settings["train_class"] == "not_set" or type(settings["train_class"]) != float or settings["train_class"] < 0:
+        logger.warning("Train result not supplied, setting to default value")
+        settings["train_class"] = -1
+    if stage in ["pos", "depparse"]:
+        if not "train_feats" in settings.keys() or not bool(settings["train_feats"]) or settings["train_feats"] == "not_set" or type(settings["train_feats"]) != float or settings["train_feats"] < 0:
+            logger.warning("Train ufeats accuracy not supplied, setting to default value")
+            settings["train_feats"] = -1
+    return settings
 
 def collect_labels(doc: Document) -> dict:
     """

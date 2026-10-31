@@ -18,5 +18,5 @@ tagging_settings:
 evaluation_settings:
   pred_file: not_set
   gold_file: not_set
-  train_result: not_set
-  train_ufeats: not_set
+  train_class: not_set
+  train_feats: not_set
