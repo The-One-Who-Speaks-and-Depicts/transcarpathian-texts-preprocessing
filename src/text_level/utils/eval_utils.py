@@ -2,7 +2,9 @@
 Contains utility functions that may occur to be useful different
 evaluation procedures.
 
-*check_eval_parameters_by_stage (dict, str) -> dict: checks, whether the provided
+* check_original_evaluation (dict, str) -> float: takes the evaluation run parameters and extracts
+a result that a model achieved on the dataset it was trained on by the provided key
+* check_eval_parameters_by_stage (dict, str) -> dict: checks, whether the provided
 evaluation parameters are correct, amending, if possible.
 * collect_labels (stanza.models.common.doc) -> dict: gathers a 
 dictionary with unique morphosyntactic tags from the Stanza Document object. 
@@ -35,6 +37,40 @@ from stanza.utils.conll import CoNLL
 logger = getLogger('preprocessor')
 
 
+def check_original_evaluation(settings: dict, evaluation_type: str = "train_class") -> float:
+    """
+    Takes the evaluation run settings and the type of the evaluation to extract
+    the results of evaluation on the training dataset.
+
+    Params:
+        settings (dict): an experiment configuration object, provided by a user
+        evaluation_type (str): a type of originally conducted evaluation that serves as a key
+        to obtaining its value
+    
+    Returns:
+        float: a metric value that a model achieved during its evaluation on the original
+        (training) data
+    """
+    logger.debug("Input: %s", locals())
+    if not isinstance(settings, dict):
+        raise TypeError(f"settings should be a dictionary, received {settings}")
+    if not isinstance(evaluation_type, str):
+        raise TypeError("The key for previous evaluation results should be a string, " \
+        f"received {evaluation_type}")
+    if not evaluation_type.strip():
+        raise ValueError("The key for previous evaluation results should not be empty, " \
+        f"received {evaluation_type}")
+    if not evaluation_type in settings.keys() or not bool(
+        settings[evaluation_type]
+        ) or settings[evaluation_type] == "not_set" or not isinstance(
+            settings[evaluation_type], float) or settings[evaluation_type] < 0:
+        logger.warning("%s value not supplied, setting to default value", evaluation_type)
+        return -1.0
+    result = settings[evaluation_type]
+    logger.debug("Metric value for previous evaluation of %s is %s", evaluation_type, result)
+    return result
+
+
 def check_eval_parameters_by_stage(settings: dict, stage: str) -> dict:
     """
     Performs the initial check on the evaluation parameters in the configuration file,
@@ -48,6 +84,7 @@ def check_eval_parameters_by_stage(settings: dict, stage: str) -> dict:
     Returns:
         dict: an experiment configuration object, either amended by a function, or preserved as is
     """
+    logger.debug("Input: %s")
     if not bool(settings["pred_file"]) or not isfile(settings["pred_file"]):
         raise ValueError(f"File with predictions does not exist, received {settings['pred_file']}")
     if not bool(settings["gold_file"]) or not isfile(settings["gold_file"]):
@@ -56,13 +93,10 @@ def check_eval_parameters_by_stage(settings: dict, stage: str) -> dict:
     logger.info("The evaluation parameters successfully checked; " \
     "checking predictions in %s against gold annotation in %s",
     settings["pred_file"], settings["gold_file"])
-    if not "train_class" in settings.keys() or not bool(settings["train_class"]) or settings["train_class"] == "not_set" or type(settings["train_class"]) != float or settings["train_class"] < 0:
-        logger.warning("Train result not supplied, setting to default value")
-        settings["train_class"] = -1
+    settings["train_class"] = check_original_evaluation(settings, "train_class")
     if stage in ["pos", "depparse"]:
-        if not "train_feats" in settings.keys() or not bool(settings["train_feats"]) or settings["train_feats"] == "not_set" or type(settings["train_feats"]) != float or settings["train_feats"] < 0:
-            logger.warning("Train ufeats accuracy not supplied, setting to default value")
-            settings["train_feats"] = -1
+        settings["train_feats"] = check_original_evaluation(settings, "train_feats")
+    logger.debug("Experiment run settings checked, received\n%s", settings)
     return settings
 
 def collect_labels(doc: Document) -> dict:
@@ -122,6 +156,7 @@ def robustness_score(
     Returns:
         Number: a metric value    
     """
+    logger.debug("Input: %s", locals())
     if not isinstance(original_score, Number) or original_score < 0:
         raise ValueError("original_score should be a non-negative number, " \
         f"received {original_score}")
@@ -131,7 +166,6 @@ def robustness_score(
     if not isinstance(robustness_coefficient, Number) or robustness_coefficient <= 0:
         raise ValueError("robustness_coefficient should be number and higher than zero, " \
         f"received {robustness_coefficient}")
-    logger.debug("Input: %s", locals())
     ideal_vector = np.array([robustness_coefficient, 0])
     current_vector = np.array([robustness_coefficient, current_score - original_score])
     cos_sim = np.dot(
@@ -151,8 +185,8 @@ class AnnotationLabels(NamedTuple):
     """
     Contains the morphosyntactic information, extracted from
     a CoNLL-U document, or an annotation: parts-of-speech (pos),
-    lemmatisation (lemma), morphological features (feats), syntactic head (head)
-    and syntactic relationship between the token and the head (deprel).
+    lemmatisation (lemma), morphological features (feats), a syntactic head (head)
+    and a syntactic relationship between the token and the head (deprel).
     """
     pos: str
     lemma: str
@@ -173,24 +207,37 @@ def collect_annotation(doc: Document) -> list[AnnotationLabels]:
         list[AnnotationLabels]: a list of morphosyntactic annotation
         for each token in the original document
     """
-    logger.info("Input: %s", locals())
+    logger.debug("Input: %s", locals())
     if not isinstance(doc, Document):
         raise TypeError(f"doc should be a Document, received {doc}")
     annotations = []
     for sent in doc.sentences:
         for token in sent.tokens:
             for word in token.words:
-                pos = word.upos if word.upos is not None else '_'
-                lemma = word.lemma if word.lemma is not None else '_'
-                feats = word.feats if word.feats is not None else '_'
-                head = word.head if word.head is not None else '_'
-                deprel = word.deprel  if word.deprel is not None else '_'
+                pos = word.upos if hasattr(word, 'upos') and word.upos is not None else '_'
+                lemma = word.lemma if hasattr(word, 'lemma') and word.lemma is not None else '_'
+                feats = word.feats if hasattr(word, 'feats') and word.feats is not None else '_'
+                head = word.head if hasattr(word, 'head') and word.head is not None else '_'
+                deprel = word.deprel  if hasattr(
+                    word, 'deprel'
+                    ) and word.deprel is not None else '_'
                 annotations.append(
                     AnnotationLabels(pos, lemma, feats, head, deprel)
                     )
+    logger.debug("Annotations collected:\n%s", annotations)
     return annotations
 
 class EvaluationDataset(NamedTuple):
+    """
+    A pair of Stanza Document objects with some information surfaced for the evaluation purposes.
+
+    Fields:
+        gold_doc (Document): a Stanza Document that contains a gold annotation
+        pred_doc (Document): a Stanza Document that contains predictions
+        gold: a gold annotation, flattened word by word
+        pred: predictions, flattened word by word
+        labels: a list of labels that are in the gold_doc
+    """
     gold_doc: Document
     pred_doc: Document
     gold: list[AnnotationLabels]
@@ -282,7 +329,7 @@ def get_lcss_indices(
     lcs_start_compd = lcs_end_compd - lcs_length
 
     # Lemmatisation-specific part; basically, protects the algorithm from finding
-    # a single (or more than single) random coincidence
+    # a single-sign (or more than single-) random coincidence
     if ignore_if_not_at_beginning and lcs_length < min_length:
         compb_starts_wit_lcs = (lcs_start_compb == 0)
         compd_starts_with_lcs = (lcs_start_compd == 0)

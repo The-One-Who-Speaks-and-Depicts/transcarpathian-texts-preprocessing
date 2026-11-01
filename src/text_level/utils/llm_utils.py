@@ -43,12 +43,12 @@ class ClientParams():
 
 
 def load_prompt(user_params: dict) -> str:
-    logger.info("Input: %s", locals())
+    logger.debug("Input: %s", locals())
     if bool(user_params["prompt"]):
         if isfile(user_params["prompt"]):
-            logger.info("Loading user-defined prompt from %s", user_params["prompt"])
+            logger.debug("Loading user-defined prompt from %s", user_params["prompt"])
             return open(user_params["prompt"], 'r', encoding='utf-8').read()
-        logger.info("Loading user-defined prompt directly from config, value is %s", user_params["prompt"])
+        logger.debug("Loading user-defined prompt directly from config, value is %s", user_params["prompt"])
         return user_params["prompt"]
     default_prompt = "Generate Universal Dependencies CoNLL-U from {sent}"
     logger.warning("No user-defined prompt, using default prompt:\n%s", default_prompt)
@@ -66,7 +66,7 @@ def load_llm_params(settings: dict) -> ClientParams:
         ClientParams: a ClientParams object that stores a set of parameters that 
         regulate an LLM run in the experiment for the reproducibility purposes
     """
-    logger.info("Input: %s", locals())
+    logger.debug("Input: %s", locals())
     if not bool(settings["llm_params"]):
         raise ValueError("LLM parameters not given")
     user_params = settings["llm_params"]
@@ -82,7 +82,7 @@ def load_llm_params(settings: dict) -> ClientParams:
     )
     logged_params = deepcopy(params_set)
     logged_params.api_key = '******' + logged_params.api_key[-6:] 
-    logger.info("The LLM tagging parameters set to %s", logged_params)
+    logger.debug("The LLM tagging parameters set to %s", logged_params)
     return params_set
 
 
@@ -120,6 +120,7 @@ def process_llm_response(
         with annotated CoNLL-U fields ("pos", "feats", "lemma", "head", "deprel") as keys
         and LLM predictions as values
     """
+    logger.debug("Input: %s", locals())
     if not isinstance(sent, Sentence):
         raise TypeError(f"sent is not a CoNLL-U sentence in Stanza format, received {sent}")
     if not isinstance(sent_tokenised, list) or not all(
@@ -131,7 +132,7 @@ def process_llm_response(
     if not isinstance(response_content, str):
         raise TypeError(f"LLM text response should be a string, received {response_content}")
     logger.debug('LLM response for %s:\n%s', sent, response) 
-    logger.debug('LLM annotation for tokens %s:\n%s', sent_tokenised, response_content)
+    logger.info('LLM annotation for tokens %s:\n%s', sent_tokenised, response_content)
     # small models tend to incontrollably generate code blocks 
     # designations around the actual output
     cleared_content = sub(r'```(json)?\n?', '', response_content)
@@ -205,7 +206,7 @@ def transfer_llm_annotation(
     Returns:
         Document: the annotated CoNLL-U document        
     """
-    logger.info("Input: %s", locals())
+    logger.debug("Input: %s", locals())
     if not isinstance(doc_for_processing, Document):
         raise TypeError("Incorrect object for a document annotation," \
         f"received {doc_for_processing}")
@@ -234,7 +235,7 @@ def transfer_llm_annotation(
                     field,
                     getattr(current_word, field) if hasattr(current_word, field) else '_'
                 )
-    logger.info("Annotation of sentence %s is finished, the product is %s",
+    logger.debug("Annotation of sentence %s is finished, the product is %s",
                 sent,
                 doc_for_processing.sentences[sent_idx])
     return doc_for_processing

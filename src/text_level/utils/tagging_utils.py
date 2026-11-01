@@ -31,7 +31,7 @@ def store_predictions(
         dataset_name: str,
         doc: Document
         ) -> None:
-    logger.info("Input: %s", locals())
+    logger.debug("Input: %s", locals())
     # models usually contain slash in their name ("google/gemma-3en-4b"),
     # I replace it with underscore
     model_name = sub(r'\/', '_', model_name)
@@ -43,7 +43,7 @@ def store_predictions(
     logger.info("Edit results of %s in %s", stage_name, file_to_edit)
 
 def load_input_data(input_file_path: str, pretagged: bool = False) -> tuple[Document, Document]:
-    logger.info("Input: %s", locals())
+    logger.debug("Input: %s", locals())
     doc = CoNLL.conll2doc(input_file_path)
     doc_for_processing = deepcopy(doc)
     for sent in doc_for_processing.sentences:
@@ -56,11 +56,11 @@ def load_input_data(input_file_path: str, pretagged: bool = False) -> tuple[Docu
                         new_form = sub('wf=', '', new_form)
                         word.text = new_form
                 if not pretagged:
-                    if word.upos is None:
+                    if not hasattr(word, 'upos') or word.upos is None:
                         word.upos = '_'
-                    if word.feats is None:
+                    if not hasattr(word, 'feats') or word.feats is None:
                         word.feats = '_'
-                    if word.lemma is None:
+                    if not hasattr(word, 'lemma') or word.lemma is None:
                         word.lemma = '_'
     logger.debug("%s loaded", input_file_path)
     return doc, doc_for_processing

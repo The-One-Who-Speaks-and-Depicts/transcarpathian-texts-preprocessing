@@ -30,10 +30,10 @@ def get_pos_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
     Returns:
         dict: a JSON schema that one can afterwards feed to the annotating LLM
         and which constraints its output to the exact same tokens it received, 
-        annotated with the exact set of universal part-of-speech tag and the set of 
+        annotated with the exact set of universal part-of-speech tags and sets of
         morphological features, determined by the model, but hinted at the prompt
     """
-    logger.info('Input: %s', locals())
+    logger.debug('Input: %s', locals())
     schema = {
         "type": "json_schema",
         "json_schema": {
@@ -86,7 +86,7 @@ def get_lemma_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
         and which constraints its output to the exact same tokens it received, 
         annotated with the lemmatisation, determined by the model, hinted at the prompt
     """
-    logger.info("Input: %s", locals())
+    logger.debug("Input: %s", locals())
     schema = {
         "type": "json_schema",
         "json_schema": {
@@ -132,7 +132,7 @@ def get_depparse_schema(sent: Sentence) -> dict:
         and which constraints its output to the exact same tokens it received, 
         annotated with the lemmatisation, determined by the model, hinted at the prompt
     """
-    logger.info("Input: %s", locals())
+    logger.debug("Input: %s", locals())
     ids = [w.id for w in sent.words]
     ids_with_root = [w.id for w in sent.words]
     ids_with_root.append(0)

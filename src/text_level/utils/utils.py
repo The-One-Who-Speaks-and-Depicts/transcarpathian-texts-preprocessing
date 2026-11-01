@@ -36,7 +36,7 @@ def set_logger(folder: PathLike, logger_level: int = 10) -> Logger:
     if not isinstance(logger_level, int):
         raise TypeError(f"logger_level is not an integer, receive {logger_level}")
     if logger_level not in [0, 10, 20, 30, 40, 50]:
-        raise ValueError("logger_level has a value {logger_level}, which is non-convertable " \
+        raise ValueError(f"logger_level has a value {logger_level}, which is non-convertable " \
         "to a NOTSET, DEBUG, INFO, WARNING, ERROR or CRITICAL level (see the Python " \
         "logging library documentation for the details)")
     logger = getLogger('preprocessor')

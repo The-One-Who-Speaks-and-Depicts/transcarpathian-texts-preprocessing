@@ -1,7 +1,13 @@
+"""
+Contains the functions, specific for dependency parsing annotation and evaluation.
+
+* get_stanza_depparse_pipeline (str, bool) -> Pipeline: prepares a Stanza processing pipeline
+for dependency parsing.
+"""
+
 from logging import getLogger
 
 from stanza import download, Pipeline
-from stanza.utils.conll import CoNLL
 from ntpath import basename
 
 from stanza.models.common.doc import Document, Sentence, Word
@@ -18,19 +24,34 @@ def preprocess_conllu_word_for_depparse(word: Word, pretagged: bool | str) -> st
     text = word.text
     if not pretagged:
         return text
-    upos = word.pos if word.pos is not None and word.pos.strip() else '_'
-    feats = word.feats if word.feats is not None and word.feats.strip() else '_'
-    lemma = word.lemma if word.lemma is not None and word.lemma.strip() else '_'
+    upos = word.pos if hasattr(
+        word, 'pos'
+        ) and word.pos is not None and word.pos.strip() else '_'
+    feats = word.feats if hasattr(
+        word, 'feats'
+        ) and word.feats is not None and word.feats.strip() else '_'
+    lemma = word.lemma if hasattr(
+        word, 'lemma'
+        ) and word.lemma is not None and word.lemma.strip() else '_'
     if pretagged == 'detokenised':
         return ' '.join([upos, feats])
     return ' '.join([text, lemma, upos, feats])
 
 
-def depparse_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk', pretagged: bool = True) -> None:
-    logger.debug("Called with arguments %s", locals())
-    doc, doc_for_processing = load_input_data(input_file_path, pretagged)
+def get_stanza_depparse_pipeline(lang: str = 'uk', pretagged: bool = True) -> Pipeline:
+    """
+    Returns a Stanza dependency parsing Pipeline for provided language and previously
+    available information.
+
+    Params:
+        lang (str): a language code (see Stanza documentation for the list of available languages)
+        pretagged (bool): information on whether lemmatisation already happened
+
+    Returns:
+        stanza.Pipeline: a Stanza Pipeline for dependency parsing
+    """
+    logger.debug("Input: %s", locals())
     download(lang)
-    logger.debug("%s loaded", input_file_path)
     nlp = Pipeline(
         lang=lang,
         processors=['tokenize', 'depparse'],
@@ -43,11 +64,9 @@ def depparse_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk'
             use_gpu=True,
             tokenize_pretokenized=True
             )
-    logger.debug("Dependency parsing pipeline prepared, settings: %s", nlp)
-    doc_processed = nlp(doc_for_processing)
-    doc_processed = restore_original_tags(doc_processed, doc, pretagged)
-    pretagging_info = 'gold' if pretagged else 'silver'
-    store_predictions(f"depparse_{pretagging_info}", "stanza", exp_folder, basename(input_file_path), doc_processed)
+    return nlp
+
+
 
 def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams(), pretagged: bool | str = True) -> None:
     logger.debug("Called with arguments %s", locals())
