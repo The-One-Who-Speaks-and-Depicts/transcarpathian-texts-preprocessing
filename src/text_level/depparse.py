@@ -66,8 +66,25 @@ def get_stanza_depparse_pipeline(lang: str = 'uk', pretagged: bool = True) -> Pi
             )
     return nlp
 
+# TODO: document
+def get_depparse_prompt(prompt_template: str, sent: Sentence, sent_tokenised: str, pretagged: bool | str = True):
+    prompt = prompt_template.format(
+        sent=f"{sent_tokenised}\nTokens:\n{
+            '\n'.join(
+                [' '.join(
+                    [
+                        str(w.id),
+                        ':',
+                        preprocess_conllu_word_for_depparse(w, pretagged)
+                    ]
+                     ) for w in sent.words]
+                ) + '\n'
+            }"
+        )
+    logger.debug("Prompt is assembled:\n %s", prompt)
+    return prompt
 
-
+# TODO: exists until annotate_with_llm not properly finished
 def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams(), pretagged: bool | str = True) -> None:
     logger.debug("Called with arguments %s", locals())
     doc, doc_for_processing = load_input_data(input_file_path)
@@ -144,7 +161,6 @@ def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParam
             pretagging_info = 'gold'
         case _:
             pretagging_info = 'silver'
-    pretagging_info = 'gold-pos' if pretagged else 'silver-pos'
     store_predictions(f"lemmatisation_{pretagging_info}", params.model, exp_folder, basename(input_file_path), doc_for_processing)
 
 
