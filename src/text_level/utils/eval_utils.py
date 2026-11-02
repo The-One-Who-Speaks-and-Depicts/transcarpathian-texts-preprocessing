@@ -3,7 +3,7 @@ Contains utility functions that may occur to be useful different
 evaluation procedures.
 
 * check_original_evaluation (dict, str) -> float: takes the evaluation run parameters and extracts
-a result that a model achieved on the dataset it was trained on by the provided key
+a result that a model achieved on the dataset it was trained on by the provided key.
 * check_eval_parameters_by_stage (dict, str) -> dict: checks, whether the provided
 evaluation parameters are correct, amending, if possible.
 * collect_labels (stanza.models.common.doc) -> dict: gathers a 

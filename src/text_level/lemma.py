@@ -1,3 +1,10 @@
+"""
+Contains the functions, specific for lemmatisation annotation and evaluation.
+
+* get_lemmatisation_pipeline (str, bool) -> Pipeline: prepares a Stanza processing pipeline
+for lemmatisation.
+"""
+
 from logging import getLogger
 from numbers import Number
 from ntpath import basename
@@ -17,10 +24,20 @@ from utils.tagging_utils import store_predictions, load_input_data, restore_orig
 
 logger = getLogger('preprocessor')
 
-def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk', pretagged: bool = True):
-    doc, doc_for_processing = load_input_data(input_file_path)    
+def get_stanza_lemmatisation_pipeline(lang: str = 'uk', pretagged: bool = True) -> Pipeline:
+    """
+    Returns a Stanza lemmatisation Pipeline for provided language and previously
+    available information.
+
+    Params:
+        lang (str): a language code (see Stanza documentation for the list of available languages)
+        pretagged (bool): information on whether morphological tagging already happened
+
+    Returns:
+        stanza.Pipeline: a Stanza Pipeline for lemmatisation
+    """
+    logger.debug("Input: %s", locals())
     download(lang)
-    doc, doc_for_processing = load_input_data(input_file_path, pretagged)
     nlp = Pipeline(
         lang=lang,
         processors=['tokenize', 'lemma'],
@@ -33,12 +50,7 @@ def lemmatise_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk
             use_gpu=True,
             tokenize_pretokenized=True
             )
-    logger.debug("Lemmatisation tagging pipeline prepared, settings: %s", nlp)
-    logger.debug("Called with arguments %s", locals())
-    doc_processed = nlp(doc_for_processing)
-    doc_processed = restore_original_tags(doc_processed, doc, pretagged)
-    pretagging_info = 'gold-pos' if pretagged else 'silver-pos'
-    store_predictions(f"lemmatisation_{pretagging_info}", "stanza", exp_folder, basename(input_file_path), doc_processed)
+    return nlp
 
 def lemmatise_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams(), pretagged: bool = True) -> None:
     logger.debug("Called with arguments %s", locals())

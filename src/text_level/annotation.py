@@ -30,6 +30,8 @@ def annotate_with_stanza(
         (pos for lemma, for instance)
     """
     logger.debug("Called with arguments %s", locals())
+    if not isinstance(nlp, Pipeline):
+        raise ValueError(f"nlp is not a stanza.Pipeline object, received {nlp}")
     doc, doc_for_processing = load_input_data(input_file_path, pretagged)
     logger.debug("%s loaded", input_file_path)    
     logger.debug("%s pipeline prepared, settings:\n %s", stage, nlp)

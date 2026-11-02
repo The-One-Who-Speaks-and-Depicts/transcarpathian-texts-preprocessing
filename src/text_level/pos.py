@@ -1,6 +1,5 @@
 from logging import getLogger
 from ntpath import basename
-from os.path import join
 from pathlib import Path
 
 from sklearn.metrics import precision_recall_fscore_support
@@ -15,15 +14,26 @@ from utils.tagging_utils import store_predictions, load_input_data, restore_orig
 
 logger = getLogger('preprocessor')
 
-def pos_tag_with_stanza(input_file_path: str, exp_folder: str, lang: str = 'uk') -> None:
-    logger.debug("Called with arguments %s", locals())
-    doc, doc_for_processing = load_input_data(input_file_path, True)
+def get_stanza_morphology_pipeline(lang: str = 'uk', pretagged: bool = True) -> Pipeline:
+    """
+    Returns a Stanza morphological tagging Pipeline for provided language and previously
+    available information.
+
+    Params:
+        lang (str): a language code (see Stanza documentation for the list of available languages)
+
+    Returns:
+        stanza.Pipeline: a Stanza Pipeline for morphological tagging
+    """
+    logger.debug("Input: %s", locals())
     download(lang)
-    nlp = Pipeline(lang=lang, processors=['tokenize', 'pos'], use_gpu=True, tokenize_pretokenized=True)
-    logger.debug("Part-of-speech tagging pipeline prepared")
-    doc_processed = nlp(doc_for_processing)
-    doc_processed = restore_original_tags(doc_processed, doc, pretagged = False)
-    store_predictions("pos", "stanza", Path(exp_folder), basename(input_file_path), doc_processed)
+    nlp = Pipeline(
+        lang=lang,
+        processors=['tokenize', 'pos'],
+        use_gpu=True,
+        tokenize_pretokenized=pretagged
+        )
+    return nlp
 
 def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams()) -> None:
     logger.debug("Called with arguments %s", locals())

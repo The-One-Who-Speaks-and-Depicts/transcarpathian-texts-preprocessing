@@ -18,8 +18,8 @@ from utils.llm_utils import load_llm_params
 from utils.eval_utils import check_eval_parameters_by_stage
 
 from annotation import annotate_with_stanza
-from pos import pos_tag_with_stanza, pos_tag_with_llm, eval_morphology
-from lemma import lemmatise_with_stanza, lemmatise_with_llm, evaluate_lemma
+from pos import get_stanza_morphology_pipeline, pos_tag_with_llm, eval_morphology
+from lemma import get_stanza_lemmatisation_pipeline, lemmatise_with_llm, evaluate_lemma
 from depparse import  get_stanza_depparse_pipeline, depparse_with_llm, evaluate_depparse
 from topic_modelling import perform_topic_modelling  
 
@@ -72,15 +72,19 @@ def main(args):
                 case "pos":
                     match config["model"]:
                         case "stanza":
-                            pos_tag_with_stanza(settings["input_file"], exp_dir)
+                            annotate_with_stanza(
+                                settings["input_file"], exp_dir, config["stage"],
+                                get_stanza_morphology_pipeline('uk', settings["pretagged"]),
+                                settings["pretagged"])
                         case "llm":                            
                             pos_tag_with_llm(settings["input_file"], exp_dir, llm_params)
                 case "lemma":
                     match config["model"]:
                         case "stanza":
-                            lemmatise_with_stanza(
-                                settings["input_file"], exp_dir, pretagged=settings["pretagged"]
-                                )
+                            annotate_with_stanza(
+                                settings["input_file"], exp_dir, config["stage"],
+                                get_stanza_lemmatisation_pipeline('uk', settings["pretagged"]),
+                                settings["pretagged"])
                         case "llm":
                             lemmatise_with_llm(
                                 settings["input_file"], exp_dir,

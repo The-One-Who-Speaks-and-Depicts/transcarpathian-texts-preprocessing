@@ -74,19 +74,26 @@ def restore_original_tags(
     xpos (a language-specific part-of-speech), set by a Stanza tagger, in case it is required. 
 
     Params:
-        doc_for_processing (stanza.models.common.doc.Document): the annotated document.
+        doc_for_processing (stanza.models.common.doc.Document): the annotated document
         original_document (stanza.models.common.doc.Document): the document in its original form
         pretagged (bool): the information on earlier annotation, used for assigning or
-        not assigning (because it may exist) an xpos to the tokens of the preprocessed document.
+        not assigning (because it may exist) an xpos to the tokens of the preprocessed document
     
     Returns:
         stanza.models.common.doc.Document: the annotated document with the original tokenisation
-        and, optionally, xpos)
+        and, optionally, xpos
     """
     for sent_idx, sent in enumerate(doc_for_processing.sentences):
         for tkn_idx, token in enumerate(sent.tokens):
             for wrd_idx, _ in enumerate(token.words):
-                doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text = original_document.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].text
+                original_token = original_document.sentences[
+                    sent_idx
+                    ].tokens[tkn_idx].words[wrd_idx].text
+                doc_for_processing.sentences[
+                    sent_idx
+                    ].tokens[tkn_idx].words[wrd_idx].text = original_token
                 if not pretagged:
-                    doc_for_processing.sentences[sent_idx].tokens[tkn_idx].words[wrd_idx].xpos = '_'
+                    doc_for_processing.sentences[
+                        sent_idx
+                        ].tokens[tkn_idx].words[wrd_idx].xpos = '_'
     return doc_for_processing

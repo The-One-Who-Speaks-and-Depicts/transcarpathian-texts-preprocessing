@@ -58,6 +58,7 @@ def perform_initial_check_config(config: Any) -> Any:
 
     Params:
         config (Any): an experiment configuration
+
     Returns:
         Any: an experiment configuration amended if necessary
     """

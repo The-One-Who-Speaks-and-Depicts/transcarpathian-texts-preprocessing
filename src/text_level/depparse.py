@@ -214,14 +214,14 @@ def score_uas_and_las(
     las_with_incorrect_tagging_share = las_with_incorrect_tagging/total_incorrect_tagging * 100 if total_incorrect_tagging > 0 else 0
     logger.info("Share of correctly syntactically tagged items %s among incorrectly morphologically tagged items is %.2f%%", data_part, las_with_incorrect_tagging_share)
 
-def get_root(sent: Sentence) -> str:
+def get_verbal_root(sent: Sentence) -> str:
     for token in sent.tokens:
         for word in token.words:
             if word.pos == 'VERB' and word.deprel == 'root':
                 return word.id
     return ''
 
-def get_deps(sent: Sentence, root: str) -> list[tuple[str, str]]:
+def get_root_deps(sent: Sentence, root: str) -> list[tuple[str, str]]:
     deps = []
     for token in sent.tokens:
         for word in token.words:
@@ -232,9 +232,9 @@ def get_deps(sent: Sentence, root: str) -> list[tuple[str, str]]:
 def get_cp(doc: Document) -> list[dict]:
     cps = []
     for sent in doc.sentences:
-        cp = {'id': sent.sent_id, 'root': get_root(sent)}
+        cp = {'id': sent.sent_id, 'root': get_verbal_root(sent)}
         if cp['root']:
-            cp['deps'] = get_deps(sent, cp['root'])
+            cp['deps'] = get_root_deps(sent, cp['root'])
             cps.append(cp)
     return cps
 

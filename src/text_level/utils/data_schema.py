@@ -84,7 +84,7 @@ def get_lemma_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
     Returns:
         dict: a JSON schema that one can afterwards feed to the annotating LLM
         and which constraints its output to the exact same tokens it received, 
-        annotated with the lemmatisation, determined by the model, hinted at the prompt
+        annotated with the lemmatisation, determined by the model
     """
     logger.debug("Input: %s", locals())
     schema = {
@@ -130,7 +130,7 @@ def get_depparse_schema(sent: Sentence) -> dict:
     Returns:
         dict: a JSON schema that one can afterwards feed to the annotating LLM
         and which constraints its output to the exact same tokens it received, 
-        annotated with the lemmatisation, determined by the model, hinted at the prompt
+        annotated with the syntactic heads and dependency relations, determined by the model
     """
     logger.debug("Input: %s", locals())
     ids = [w.id for w in sent.words]
