@@ -4,7 +4,7 @@ evaluation procedures.
 
 * check_original_evaluation (dict, str) -> float: takes the evaluation run parameters and extracts
 a result that a model achieved on the dataset it was trained on by the provided key.
-* check_eval_parameters_by_stage (dict, str) -> dict: checks, whether the provided
+* check_eval_parameters_by_stage (Any, str) -> dict: checks, whether the provided
 evaluation parameters are correct, amending, if possible.
 * collect_labels (stanza.models.common.doc) -> dict: gathers a 
 dictionary with unique morphosyntactic tags from the Stanza Document object. 
@@ -26,7 +26,7 @@ from logging import getLogger
 from ntpath import basename
 from numbers import Number
 from os.path import join, isfile
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from collections.abc import Callable
 import numpy as np
@@ -71,20 +71,23 @@ def check_original_evaluation(settings: dict, evaluation_type: str = "train_clas
     return result
 
 
-def check_eval_parameters_by_stage(settings: dict, stage: str) -> dict:
+def check_eval_parameters_by_stage(config: Any, stage: str) -> dict:
     """
     Performs the initial check on the evaluation parameters in the configuration file,
     provided by a user. In case there is no information provided, attempts to amend,
     assigning default values (only in case of the previous evaluation).
 
     Params:
-        settings (dict): an experiment configuration object, provided by a user
+        config (Any): an experiment configuration
         stage (str): shows a type of annotation
     
     Returns:
         dict: an experiment configuration object, either amended by a function, or preserved as is
     """
     logger.debug("Input: %s")
+    if not bool(config["evaluation_settings"]):
+        raise ValueError(f"Evaluation settings do not exist, configuration:\n{config}")
+    settings = config["evaluation_settings"]
     if not bool(settings["pred_file"]) or not isfile(settings["pred_file"]):
         raise ValueError(f"File with predictions does not exist, received {settings['pred_file']}")
     if not bool(settings["gold_file"]) or not isfile(settings["gold_file"]):

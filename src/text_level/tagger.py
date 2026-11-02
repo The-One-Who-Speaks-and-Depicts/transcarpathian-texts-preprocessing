@@ -53,16 +53,13 @@ def main(args):
                  exp_dir)
     logger = set_logger(exp_dir)
     # ==================================== Tagging/evaluation ====================================
-    settings = config[
-        "tagging_settings"
-        ] if config["phase"] == "pred" else config[
-            "evaluation_settings"
-            ]
     llm_params = None
     if config["model"] == "llm":
         llm_params = load_llm_params(settings["llm_params"])
     match config["phase"]:
         case "pred":
+            if not bool(config["tagging_settings"]):
+                raise ValueError(f"Tagging settings do not exist, configuration:\n{config}")
             if not bool(settings["input_file"]) or not exists(settings["input_file"]):
                 raise ValueError("Input file does not exist")
             if not "pretagged" in settings.keys():
@@ -105,7 +102,7 @@ def main(args):
                 case "topic":
                     perform_topic_modelling(settings["input_file"], exp_dir)
         case "eval":
-            settings = check_eval_parameters_by_stage(settings, config["stage"])
+            settings = check_eval_parameters_by_stage(config)
             match config["stage"]:
                 case "pos":
                     eval_morphology(
