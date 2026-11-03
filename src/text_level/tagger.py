@@ -17,10 +17,11 @@ from utils.utils import (
 from utils.llm_utils import load_llm_params
 from utils.eval_utils import check_eval_parameters_by_stage
 
-from annotation import annotate_with_stanza
+from annotation import annotate_with_stanza, annotate_with_llm, LLMAnnotationSettings
+from utils.data_schema import get_depparse_schema
 from pos import get_stanza_morphology_pipeline, pos_tag_with_llm, eval_morphology
 from lemma import get_stanza_lemmatisation_pipeline, lemmatise_with_llm, evaluate_lemma
-from depparse import  get_stanza_depparse_pipeline, depparse_with_llm, evaluate_depparse
+from depparse import  get_stanza_depparse_pipeline, get_depparse_prompt, evaluate_depparse
 from topic_modelling import perform_topic_modelling  
 
 
@@ -52,19 +53,20 @@ def main(args):
                  config,
                  exp_dir)
     logger = set_logger(exp_dir)
-    # ==================================== Tagging/evaluation ====================================
-    llm_params = None
-    if config["model"] == "llm":
-        llm_params = load_llm_params(settings["llm_params"])
+    # ==================================== Tagging/evaluation ====================================    
     match config["phase"]:
         case "pred":
             if not bool(config["tagging_settings"]):
                 raise ValueError(f"Tagging settings do not exist, configuration:\n{config}")
+            settings = config["tagging_settings"]
             if not bool(settings["input_file"]) or not exists(settings["input_file"]):
                 raise ValueError("Input file does not exist")
             if not "pretagged" in settings.keys():
                 logger.warning("Information on tagging not supplied")
                 settings["pretagged"] = False
+            llm_params = None
+            if config["model"] == "llm":
+                llm_params = load_llm_params(settings["llm_params"])
             match config["stage"]:
                 case "pos":
                     match config["model"]:
@@ -73,7 +75,8 @@ def main(args):
                                 settings["input_file"], exp_dir, config["stage"],
                                 get_stanza_morphology_pipeline('uk', settings["pretagged"]),
                                 settings["pretagged"])
-                        case "llm":                            
+                        case "llm":
+                            # TODO: LLM annotation unification
                             pos_tag_with_llm(settings["input_file"], exp_dir, llm_params)
                 case "lemma":
                     match config["model"]:
@@ -91,16 +94,23 @@ def main(args):
                     match config["model"]:
                         case "stanza":
                             annotate_with_stanza(
+                                # TODO: these three are the same everywhere, do the same class and a united check
                                 settings["input_file"], exp_dir, config["stage"],
                                 get_stanza_depparse_pipeline('uk', settings["pretagged"]),
                                 settings["pretagged"])
                         case "llm":
-                            depparse_with_llm(
-                                settings["input_file"], exp_dir, llm_params,
-                                pretagged=settings["pretagged"]
-                                )
+                            annotate_with_llm(
+                                settings, exp_dir, config["stage"],
+                                LLMAnnotationSettings(
+                                    get_depparse_prompt,
+                                    get_depparse_schema,
+                                    ['head', 'deprel']
+                                )                                
+                            )
                 case "topic":
-                    perform_topic_modelling(settings["input_file"], exp_dir)
+                    match config["model"]:
+                        case "LDA":
+                            perform_topic_modelling(settings["input_file"], exp_dir)
         case "eval":
             settings = check_eval_parameters_by_stage(config)
             match config["stage"]:

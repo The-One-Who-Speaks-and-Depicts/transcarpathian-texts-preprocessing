@@ -4,18 +4,21 @@ of the particular annotation type.
 
 * annotate_with_stanza (str, str, str, stanza.Pipeline, bool) -> None:
 a master function for Stanza-based annotation
+* annotate_with_llm (dict, str, Callable, Callable, list) -> None:
+a master function for LLM-based annotation
 """
 
 from logging import getLogger
 from ntpath import basename
-from typing import Optional
+from os.path import exists, isdir, isfile
+from typing import Optional, NamedTuple
 
 from collections.abc import Callable
 
 from stanza import Pipeline
 from stanza.models.common.doc import Sentence
 
-from utils.llm_utils import load_llm_client, ClientParams, process_llm_errors, process_llm_response, transfer_llm_annotation
+from utils.llm_utils import load_llm_client, process_llm_errors, process_llm_response, transfer_llm_annotation, load_llm_params
 from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
 
 logger = getLogger('preprocessor')
@@ -45,16 +48,80 @@ def annotate_with_stanza(
     pretagging_info = 'gold' if pretagged else 'silver'
     store_predictions(f"{stage}_{pretagging_info}", "stanza", exp_folder, basename(input_file_path), doc_processed)
 
-# TODO: draft function
-def annotate_with_llm(input_file_path: str, exp_folder: str, stage: str, prompt_assembler: Callable[[str, Sentence, str, bool | str], str], schema_assembler: Callable[[Sentence, Optional[list[str]]], dict], fields_to_gather: list[str], params: ClientParams = ClientParams(), pretagged: bool | str = True) -> None:
+class LLMAnnotationSettings(NamedTuple):
+    prompt_assembler: Callable[[str, Sentence, str, bool | str], str]
+    schema_assembler: Callable[[Sentence, Optional[list[str]]], dict]
+    fields_to_gather: list[str]
+
+
+def annotate_with_llm(
+        settings: dict,
+        exp_folder: str,
+        stage: str,
+        llm_annotation_settings: LLMAnnotationSettings
+        ) -> None:
+    """
+    Takes an LLM annotation settings for a specific stage, and performs an annotation.
+
+    Params:
+        settings (dict): an experiment configuration object, provided by a user
+        exp_folder (str): a folder that should contain experiment results
+        prompt_assembler (Callable): a function that assembles a prompt
+        schema_assembler (Callable): a function that assembles a data schema
+        fields_to_gather (list[str]): a list of fields to annotate (e. g., ["lemma"])
+    """
     logger.debug("Called with arguments %s", locals())
+    if not bool(settings["input_file"]) or not bool(settings["pretagged"]) or not bool(
+        settings["stage"]
+        ):
+        raise ValueError(f"Incorrect experiment settings object, received:\n{settings}")
+    if not isinstance(
+        settings["input_file"], str
+        ) or not settings["input_file"] or not settings["input_file"].strip() or not exists(
+            settings["input_file"]
+        ) or not isfile(settings["input_file"]):
+        raise ValueError("input_file parameter in settings should be a valid path to file, " \
+                         f"received: {settings["input_file"]}")
+    input_file_path = settings["input_file"]
+    if not isinstance(pretagged, bool) and not isinstance(pretagged, str):
+        raise TypeError(f"pretagged should be either a boolean or a string, received {pretagged}")
+    pretagged = settings["pretagged"]
+    if not isinstance(
+        stage, str
+    ) or not stage or not stage.strip():
+        raise ValueError(f"Stage parameter is set incorrectly, received {stage}")
     doc, doc_for_processing = load_input_data(input_file_path)
+    params = load_llm_params(settings["llm_params"])
     client = load_llm_client(params.api, params.api_key, params.base_url)
+    if not isinstance(exp_folder, str) or not exists(exp_folder) or not isdir(exp_folder):
+        raise TypeError(f"Incorrectly set experiment folder, received:{exp_folder}")
+    if not isinstance(llm_annotation_settings, LLMAnnotationSettings):
+        raise TypeError("LLM annotation settings are not of respective type, " \
+        f"received {llm_annotation_settings}")
+    if not hasattr(
+        llm_annotation_settings, "prompt_assembler"
+        ) or not isinstance(llm_annotation_settings.prompt_assembler, Callable):
+        raise TypeError("prompt_assembler is not a valid function, " \
+        f"experiment settings: {llm_annotation_settings}")
+    if not hasattr(
+        llm_annotation_settings, "schema_assembler"
+        ) or not isinstance(llm_annotation_settings.schema_assembler, Callable):
+        raise TypeError("schema_assembler is not a valid function, " \
+        f"experiment settings: {llm_annotation_settings}")
+    if not hasattr(
+        llm_annotation_settings, "fields_to_gather"
+        ) or not isinstance(llm_annotation_settings.fields_to_gather, list) or not all(
+        isinstance(i, str) for i in list
+    ):
+        raise ValueError("fields_to_gather is not a list of strings, " \
+        f"received:\n{llm_annotation_settings.fields_to_gather}")
     logger.debug("LLM pipeline prepared, stage %s", stage)
     for sent_idx, sent in enumerate(doc_for_processing.sentences):
         sent_tokens = [w.text for w in sent.words]
         sent_tokenised = ' '.join(sent_tokens)
-        prompt = prompt_assembler(params.prompt, sent, sent_tokenised, pretagged)        
+        prompt = llm_annotation_settings.prompt_assembler(
+            params.prompt, sent, sent_tokenised, pretagged
+            )        
         annotated_sent = {}
         retries = 0
         while True:
@@ -71,7 +138,7 @@ def annotate_with_llm(input_file_path: str, exp_folder: str, stage: str, prompt_
                             ],
                             temperature=params.temperature,
                             seed=params.seed,
-                            response_format= schema_assembler(sent, None),
+                            response_format= llm_annotation_settings.schema_assembler(sent, None),
                             stream=False
                         )
                         response_content = response.choices[0].messsage.content
@@ -97,7 +164,7 @@ def annotate_with_llm(input_file_path: str, exp_folder: str, stage: str, prompt_
             doc_for_processing,
             sent_idx,
             sent,
-            fields_to_gather,
+            llm_annotation_settings.fields_to_gather,
             annotated_sent
         )
     doc_for_processing = restore_original_tags(doc_for_processing, doc, pretagged)

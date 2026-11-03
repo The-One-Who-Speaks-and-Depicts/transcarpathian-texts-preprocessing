@@ -3,9 +3,12 @@ Contains the functions, specific for dependency parsing annotation and evaluatio
 
 * get_stanza_depparse_pipeline (str, bool) -> Pipeline: prepares a Stanza processing pipeline
 for dependency parsing.
+* get_depparse_prompt (str, Sentence, str, bool | str) -> str: prepares a prompt for
+LLM-assisted dependency parsing.
 """
 
 from logging import getLogger
+from re import match
 
 from stanza import download, Pipeline
 from ntpath import basename
@@ -66,8 +69,43 @@ def get_stanza_depparse_pipeline(lang: str = 'uk', pretagged: bool = True) -> Pi
             )
     return nlp
 
-# TODO: document
-def get_depparse_prompt(prompt_template: str, sent: Sentence, sent_tokenised: str, pretagged: bool | str = True):
+
+
+def get_depparse_prompt(
+        prompt_template: str,
+        sent: Sentence, sent_tokenised: str,
+        pretagged: bool | str = True
+        ) -> str:
+    """
+    Takes a prompt template, information about a sentence to tag (including its tokenised form),
+    and information on whether morphological annotation and lemmatisation are available to prepare
+    a prompt for LLM-based dependency parsing.
+
+    Params:
+        prompt_template (str): a prompt of a template
+        sent (stanza.models.commom.doc.Sentence): a CoNLL-U sentence
+        sent_tokenised (str): tokens of a sentence, stored in sent
+        pretagged (bool | str): information on the previously performed annotation available:
+            - detokenised: only morphological tags
+            - True: tokens, lemmata and morphological tags
+            - False: only tokens
+    
+    Returns:
+        str: a prompt prepared for a model
+    """
+    if not isinstance(prompt_template, str):
+        raise TypeError(f"prompt_template should be a string, received {prompt_template}")
+    if not prompt_template or not prompt_template.strip() or match(
+        r'\{sent\}', prompt_template
+        ) is None:
+        raise ValueError(f"prompt_template either empty, or does not contain"
+        " a placeholder for a sentence, received {prompt_template}")
+    if not isinstance(sent, Sentence):
+        raise TypeError(f"sent should be a parsed CoNLL-U sentence, received {sent}")
+    if not isinstance(sent_tokenised, str):
+        raise TypeError(f"sent_tokenised should be a string, received {sent_tokenised}")
+    if not isinstance(pretagged, bool) and not isinstance(pretagged, str):
+        raise TypeError(f"pretagged should be either a boolean or a string, received {pretagged}")
     prompt = prompt_template.format(
         sent=f"{sent_tokenised}\nTokens:\n{
             '\n'.join(
@@ -83,86 +121,6 @@ def get_depparse_prompt(prompt_template: str, sent: Sentence, sent_tokenised: st
         )
     logger.debug("Prompt is assembled:\n %s", prompt)
     return prompt
-
-# TODO: exists until annotate_with_llm not properly finished
-def depparse_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams(), pretagged: bool | str = True) -> None:
-    logger.debug("Called with arguments %s", locals())
-    doc, doc_for_processing = load_input_data(input_file_path)
-    client = load_llm_client(params.api, params.api_key, params.base_url)
-    logger.debug("Dependency parsing pipeline prepared")
-    for sent_idx, sent in enumerate(doc_for_processing.sentences):
-        sent_tokens = [w.text for w in sent.words]
-        sent_tokenised = ' '.join(sent_tokens)
-        prompt = params.prompt.format(
-            sent=f"{sent_tokenised}\nTokens:\n{
-                '\n'.join(
-                    [' '.join(
-                        [
-                            str(w.id),
-                            ':',
-                            preprocess_conllu_word_for_depparse(w, pretagged)
-                        ]
-                         ) for w in sent.words]
-                    ) + '\n'
-                }"
-            )
-        logger.info("Prompt is assembled:\n %s", prompt)
-        annotated_sent = {}
-        retries = 0
-        while True:
-            try:
-                response = None
-                response_content = None
-                match params.api:
-                    case "OpenAI":           
-                        response = client.chat.completions.create(
-                            model=params.model,
-                            messages=[
-                                {"role": "system", "content": ""},
-                                {"role": "user", "content": prompt},
-                            ],
-                            temperature=params.temperature,
-                            seed=params.seed,
-                            response_format= get_depparse_schema(sent),
-                            stream=False
-                        )
-                        response_content = response.choices[0].messsage.content
-                    case _:
-                        raise AttributeError(f"Invalid LLM call API type, received {params.api}")
-                annotated_sent = process_llm_response(
-                    sent,
-                    sent_tokenised,
-                    response,
-                    response_content
-                    )
-                break
-            except ValueError as e:
-                retries, prompt = process_llm_errors(
-                    e,
-                    retries, params.retries,
-                    sent_tokenised,
-                    params.prompt.format(sent=sent_tokenised)
-                    )
-                continue
-
-        doc_for_processing = transfer_llm_annotation(
-            doc_for_processing,
-            sent_idx,
-            sent,
-            ['lemma'],
-            annotated_sent
-        )
-    doc_for_processing = restore_original_tags(doc_for_processing, doc, pretagged)
-    pretagging_info = None
-    match pretagged:
-        case 'detokenised':
-            pretagging_info = 'gold_detokenised'
-        case True:
-            pretagging_info = 'gold'
-        case _:
-            pretagging_info = 'silver'
-    store_predictions(f"lemmatisation_{pretagging_info}", params.model, exp_folder, basename(input_file_path), doc_for_processing)
-
 
 def conllu_to_zss_node(sent: Sentence) -> Node | None:
     node_map = {}
