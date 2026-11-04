@@ -8,18 +8,14 @@ LLM-assisted dependency parsing.
 """
 
 from logging import getLogger
-from re import match
 
 from stanza import download, Pipeline
-from ntpath import basename
 
 from stanza.models.common.doc import Document, Sentence, Word
 from zss import Node, simple_distance
 
-from utils.data_schema import get_depparse_schema
 from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation
-from utils.llm_utils import ClientParams, load_llm_client, transfer_llm_annotation, process_llm_errors, process_llm_response
-from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
+from utils.llm_utils import check_prompt_parameters
 
 logger = getLogger('preprocessor')
 
@@ -93,19 +89,7 @@ def get_depparse_prompt(
     Returns:
         str: a prompt prepared for a model
     """
-    if not isinstance(prompt_template, str):
-        raise TypeError(f"prompt_template should be a string, received {prompt_template}")
-    if not prompt_template or not prompt_template.strip() or match(
-        r'\{sent\}', prompt_template
-        ) is None:
-        raise ValueError(f"prompt_template either empty, or does not contain"
-        " a placeholder for a sentence, received {prompt_template}")
-    if not isinstance(sent, Sentence):
-        raise TypeError(f"sent should be a parsed CoNLL-U sentence, received {sent}")
-    if not isinstance(sent_tokenised, str):
-        raise TypeError(f"sent_tokenised should be a string, received {sent_tokenised}")
-    if not isinstance(pretagged, bool) and not isinstance(pretagged, str):
-        raise TypeError(f"pretagged should be either a boolean or a string, received {pretagged}")
+    check_prompt_parameters(prompt_template, sent, sent_tokenised, pretagged)
     prompt = prompt_template.format(
         sent=f"{sent_tokenised}\nTokens:\n{
             '\n'.join(

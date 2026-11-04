@@ -3,24 +3,23 @@ Contains the functions, specific for lemmatisation annotation and evaluation.
 
 * get_lemmatisation_pipeline (str, bool) -> Pipeline: prepares a Stanza processing pipeline
 for lemmatisation.
+* get_lemma_prompt (str, Sentence, str, bool | str) -> str: prepares a prompt for
+LLM-assisted lemmatisation.
 """
 
 from logging import getLogger
 from numbers import Number
-from ntpath import basename
 
 from collections.abc import Callable
 
 from stanza import download, Pipeline
-from stanza.models.common.doc import Document
+from stanza.models.common.doc import Document, Sentence
 from Levenshtein import distance as lev
 from pyjarowinkler.distance import get_jaro_distance as jw
 
 
-from utils.data_schema import get_lemma_schema
 from utils.eval_utils import prepare_annotation, robustness_score, store_rapidity_rate, AnnotationLabels, get_lcss_indices, single_point_accuracy, collect_errors_by_pos
-from utils.llm_utils import ClientParams, load_llm_client, transfer_llm_annotation, process_llm_errors, process_llm_response
-from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
+from utils.llm_utils import check_prompt_parameters
 
 logger = getLogger('preprocessor')
 
@@ -50,68 +49,39 @@ def get_stanza_lemmatisation_pipeline(lang: str = 'uk', pretagged: bool = True) 
             use_gpu=True,
             tokenize_pretokenized=True
             )
-    return nlp
+    return nlp 
 
-def lemmatise_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams(), pretagged: bool = True) -> None:
-    logger.debug("Called with arguments %s", locals())
-    doc, doc_for_processing = load_input_data(input_file_path)
-    client = load_llm_client(params.api, params.api_key, params.base_url)
-    logger.debug("Lemmatisation pipeline prepared")
-    for sent_idx, sent in enumerate(doc_for_processing.sentences):
-        sent_tokens = [w.text for w in sent.words]
-        sent_tokenised = ' '.join(sent_tokens)
-        prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + ' ' + (w.pos if w.pos is not None and w.pos.strip() else '_') + ' ' + (w.feats if w.feats is not None and w.feats.strip() else '_') +  '\n' for w in sent.words]}\n")
-        logger.info("Prompt is assembled:\n %s", prompt)
-        annotated_sent = {}
-        retries = 0
-        while True:
-            try:
-                response = None
-                response_content = None
-                match params.api:
-                    case "OpenAI":
-                        response = client.chat.completions.create(
-                            model=params.model,
-                            messages=[
-                                {"role": "system", "content": ""},
-                                {"role": "user", "content": prompt},
-                            ],
-                            temperature=params.temperature,
-                            seed=params.seed,
-                            response_format= get_lemma_schema(sent, sent_tokens),
-                            stream=False
-                        )
-                        response_content = response.choices[0].messsage.content
-                    case _:
-                        raise AttributeError(f"Invalid LLM call API type, received {params.api}")
-                annotated_sent = process_llm_response(
-                    sent,
-                    sent_tokenised,
-                    response,
-                    response_content
-                    )
-                break
-            except ValueError as e:
-                retries, prompt = process_llm_errors(
-                    e,
-                    retries,
-                    params.retries,
-                    sent_tokenised,
-                    params.prompt.format(sent=sent_tokenised)
-                    )
-                continue
+def get_lemma_prompt(
+        prompt_template: str,
+        sent: Sentence, sent_tokenised: str,
+        pretagged: bool | str = True
+        ) -> str:
+    """
+    Takes a prompt template, information about a sentence to tag (including its tokenised form),
+    and information on whether morphological annotation is available to prepare
+    a prompt for LLM-based lemmatisation.
 
-        doc_for_processing = transfer_llm_annotation(
-            doc_for_processing,
-            sent_idx,
-            sent,
-            ['lemma'],
-            annotated_sent
+    Params:
+        prompt_template (str): a prompt of a template
+        sent (stanza.models.commom.doc.Sentence): a CoNLL-U sentence
+        sent_tokenised (str): tokens of a sentence, stored in sent
+        pretagged (bool | str): information on the previously performed annotation available:
+            - True: tokens and morphological tags
+            - False: only tokens
+    
+    Returns:
+        str: a prompt prepared for a model
+    """
+    check_prompt_parameters(prompt_template, sent, sent_tokenised, pretagged)
+    prompt = prompt_template.format(
+        sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + ' ' + (
+            w.pos if w.pos is not None and w.pos.strip() else '_'
+            ) + ' ' + (
+                w.feats if w.feats is not None and w.feats.strip() else '_'
+                ) +  '\n' for w in sent.words]}\n"
         )
-    doc_for_processing = restore_original_tags(doc_for_processing, doc, pretagged)
-    pretagging_info = 'gold-pos' if pretagged else 'silver-pos'
-    store_predictions(f"lemmatisation_{pretagging_info}", params.model, exp_folder, basename(input_file_path), doc_for_processing)
-
+    logger.debug("Prompt is assembled:\n %s", prompt)
+    return prompt
 
 def show_lemmatiser_error_spots(pred: str, gold: str) -> str:
     if pred == gold:

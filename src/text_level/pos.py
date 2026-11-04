@@ -1,16 +1,20 @@
+"""
+Contains the functions, specific for morphology annotation and evaluation.
+
+* get_stanza_morphology_pipeline (str, bool) -> Pipeline: prepares a Stanza processing pipeline
+for part-of-speech and morphology tagging.
+* get_depparse_prompt (str, Sentence, str, bool | str) -> str: prepares a prompt for
+LLM-assisted part-of-speech and morphology tagging.
+"""
 from logging import getLogger
-from ntpath import basename
-from pathlib import Path
 
 from sklearn.metrics import precision_recall_fscore_support
 
 from stanza import download, Pipeline
-from stanza.models.common.doc import Document
+from stanza.models.common.doc import Document, Sentence
 
-from utils.data_schema import get_pos_schema
 from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation, store_rapidity_rate
-from utils.llm_utils import ClientParams, load_llm_client, process_llm_response, process_llm_errors, transfer_llm_annotation
-from utils.tagging_utils import store_predictions, load_input_data, restore_original_tags
+from utils.llm_utils import check_prompt_parameters
 
 logger = getLogger('preprocessor')
 
@@ -35,64 +39,33 @@ def get_stanza_morphology_pipeline(lang: str = 'uk', pretagged: bool = True) -> 
         )
     return nlp
 
-def pos_tag_with_llm(input_file_path: str, exp_folder: str, params: ClientParams = ClientParams()) -> None:
-    logger.debug("Called with arguments %s", locals())
-    doc, doc_for_processing = load_input_data(input_file_path)    
-    client = load_llm_client(params.api, params.api_key, params.base_url)
-    logger.debug("Part-of-speech tagging pipeline prepared")
-    for sent_idx, sent in enumerate(doc_for_processing.sentences):
-        sent_tokens = [w.text for w in sent.words]
-        sent_tokenised = ' '.join(sent_tokens)
-        prompt = params.prompt.format(sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + '\n' for w in sent.words]}\n")
-        logger.info("Prompt is assembled:\n %s", prompt)
-        annotated_sent = {}
-        retries = 0
-        while True:            
-            try:
-                response = {}
-                response_content = None
-                match params.api:
-                    case "OpenAI":
-                        response = client.chat.completions.create(
-                            model=params.model,
-                            messages=[
-                                {"role": "system", "content": ""},
-                                {"role": "user", "content": prompt},
-                            ],
-                            temperature=params.temperature,
-                            seed=params.seed,
-                            response_format= get_pos_schema(sent, sent_tokens),
-                            stream=False
-                        )
-                        response_content = response.choices[0].messsage.content
-                    case _:
-                        raise AttributeError(f"Invalid LLM call API type, received {params.api}")
-                annotated_sent = process_llm_response(
-                    sent,
-                    sent_tokenised,
-                    response,
-                    response_content
-                    )
-                break
-            except ValueError as e:
-                retries, prompt = process_llm_errors(
-                    e,
-                    retries,
-                    params.retries,
-                    sent_tokenised,
-                    params.prompt.format(sent=sent_tokenised)
-                    )
-                continue
-                    
-        doc_for_processing = transfer_llm_annotation(
-            doc_for_processing,
-            sent_idx,
-            sent,
-            ['upos', 'feats'],
-            annotated_sent
+def get_pos_prompt(
+        prompt_template: str,
+        sent: Sentence, sent_tokenised: str,
+        pretagged: bool | str = True
+        ) -> str:
+    """
+    Takes a prompt template, information about a sentence to tag (including its tokenised form).
+
+    Params:
+        prompt_template (str): a prompt of a template
+        sent (stanza.models.commom.doc.Sentence): a CoNLL-U sentence
+        sent_tokenised (str): tokens of a sentence, stored in sent
+        pretagged (bool | str): information on the previously performed annotation available:
+            - True: tokenisation available
+            - False: tokenisation not available
+    
+    Returns:
+        str: a prompt prepared for a model
+    """
+    check_prompt_parameters(prompt_template, sent, sent_tokenised, pretagged)
+    prompt = prompt_template.format(
+        sent=f"{sent_tokenised}\nTokens:{[str(w.id) + ': ' + w.text + '\n' for w in sent.words]}\n"
         )
-    doc_for_processing = restore_original_tags(doc_for_processing, doc, pretagged = False)
-    store_predictions("pos", params.model, Path(exp_folder), basename(input_file_path), doc_for_processing)
+    logger.debug("Prompt is assembled:\n %s", prompt)
+    return prompt
+
+
 
 def score_for_single_pos(pred: list, true: list, label: str) -> None:
     overall_size = len(true)

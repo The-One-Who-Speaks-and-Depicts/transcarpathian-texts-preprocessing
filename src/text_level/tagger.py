@@ -18,9 +18,9 @@ from utils.llm_utils import load_llm_params
 from utils.eval_utils import check_eval_parameters_by_stage
 
 from annotation import annotate_with_stanza, annotate_with_llm, LLMAnnotationSettings
-from utils.data_schema import get_depparse_schema
-from pos import get_stanza_morphology_pipeline, pos_tag_with_llm, eval_morphology
-from lemma import get_stanza_lemmatisation_pipeline, lemmatise_with_llm, evaluate_lemma
+from utils.data_schema import get_pos_schema, get_depparse_schema, get_lemma_schema
+from pos import get_stanza_morphology_pipeline, eval_morphology, get_pos_prompt
+from lemma import get_stanza_lemmatisation_pipeline, evaluate_lemma, get_lemma_prompt
 from depparse import  get_stanza_depparse_pipeline, get_depparse_prompt, evaluate_depparse
 from topic_modelling import perform_topic_modelling  
 
@@ -64,9 +64,6 @@ def main(args):
             if not "pretagged" in settings.keys():
                 logger.warning("Information on tagging not supplied")
                 settings["pretagged"] = False
-            llm_params = None
-            if config["model"] == "llm":
-                llm_params = load_llm_params(settings["llm_params"])
             match config["stage"]:
                 case "pos":
                     match config["model"]:
@@ -76,8 +73,14 @@ def main(args):
                                 get_stanza_morphology_pipeline('uk', settings["pretagged"]),
                                 settings["pretagged"])
                         case "llm":
-                            # TODO: LLM annotation unification
-                            pos_tag_with_llm(settings["input_file"], exp_dir, llm_params)
+                            annotate_with_llm(
+                                settings, exp_dir, config["stage"],
+                                LLMAnnotationSettings(
+                                    get_pos_prompt,
+                                    get_pos_schema,
+                                    ['upos', 'feats']
+                                )
+                                )
                 case "lemma":
                     match config["model"]:
                         case "stanza":
@@ -86,9 +89,13 @@ def main(args):
                                 get_stanza_lemmatisation_pipeline('uk', settings["pretagged"]),
                                 settings["pretagged"])
                         case "llm":
-                            lemmatise_with_llm(
-                                settings["input_file"], exp_dir,
-                                llm_params, pretagged=settings["pretagged"]
+                            annotate_with_llm(
+                                settings, exp_dir, config["stage"],
+                                LLMAnnotationSettings(
+                                    get_lemma_prompt,
+                                    get_lemma_schema,
+                                    ['lemma']
+                                )
                                 )
                 case "depparse":
                     match config["model"]:

@@ -15,7 +15,9 @@ takes data for error processing, returns updated retries counter and prompt.
 * process_llm_response(Sentence, list[str], dict, str) -> dict: takes a sentence and its tokens,
 alongside with the whole response of an LLM and its text content, to partailly clean it,
 perform a preliminary check on correctness and parse it into a JSON object
-that the code down the line may use to annotate the data. 
+that the code down the line may use to annotate the data.
+* check_prompt_parameters (str, Sentence, str, bool | str) -> None: assures the LLM annotation
+prompt is correct.
 """
 from copy import deepcopy
 from dataclasses import dataclass
@@ -23,7 +25,7 @@ from json import loads
 from logging import getLogger
 from os import environ
 from os.path import isfile
-from re import sub
+from re import sub, match
 
 from openai import OpenAI
 
@@ -239,3 +241,31 @@ def transfer_llm_annotation(
                 sent,
                 doc_for_processing.sentences[sent_idx])
     return doc_for_processing
+
+
+def check_prompt_parameters(prompt_template: str, sent: Sentence, sent_tokenised: str, pretagged: bool | str) -> None:
+    """
+    Ensures whether the parameters used to assemble an LLM prompt are correct.
+
+    Params:
+        prompt_template (str): a prompt of a template
+        sent (stanza.models.commom.doc.Sentence): a CoNLL-U sentence
+        sent_tokenised (str): tokens of a sentence, stored in sent
+        pretagged (bool | str): information on the previously performed annotation available:
+            - detokenised: only morphological tags
+            - True: tokens, lemmata and morphological tags
+            - False: only tokens
+    """
+    if not isinstance(prompt_template, str):
+        raise TypeError(f"prompt_template should be a string, received {prompt_template}")
+    if not prompt_template or not prompt_template.strip() or match(
+        r'\{sent\}', prompt_template
+        ) is None:
+        raise ValueError(f"prompt_template either empty, or does not contain"
+        " a placeholder for a sentence, received {prompt_template}")
+    if not isinstance(sent, Sentence):
+        raise TypeError(f"sent should be a parsed CoNLL-U sentence, received {sent}")
+    if not isinstance(sent_tokenised, str):
+        raise TypeError(f"sent_tokenised should be a string, received {sent_tokenised}")
+    if not isinstance(pretagged, bool) and not isinstance(pretagged, str):
+        raise TypeError(f"pretagged should be either a boolean or a string, received {pretagged}")
