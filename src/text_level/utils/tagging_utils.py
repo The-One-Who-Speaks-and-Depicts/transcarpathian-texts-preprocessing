@@ -9,14 +9,17 @@ Contains utilitary function for annotating texts.
 the original document, and restores original token forms and/or
 language-specific parts-of-speech (in case there was no pretagging).
 Returns the annotated document with restored annotation. 
+* check_config_for_annotation (Any) -> dict: checks, whether the provided
+annotation parameters are correct, amending, if possible. 
 """
 
 
 from copy import deepcopy
 from logging import getLogger
 from os import PathLike
-from os.path import join
+from os.path import join, exists
 from re import sub
+from typing import Any
 
 from stanza.models.common.doc import Document
 from stanza.utils.conll import CoNLL
@@ -97,3 +100,25 @@ def restore_original_tags(
                         sent_idx
                         ].tokens[tkn_idx].words[wrd_idx].xpos = '_'
     return doc_for_processing
+
+def check_config_for_annotation(config: Any) -> dict:
+    """
+    Performs the initial check on the annotation parameters in the configuration file,
+    provided by a user. In case there is no information provided, attempts to amend,
+    assigning default values (only in case of the previous evaluation).
+    
+    Params:
+        config (Any): an experiment configuration
+    
+    Returns:
+        dict: an experiment configuration object, either amended by a function, or preserved as is
+    """
+    if not bool(config["tagging_settings"]):
+        raise ValueError(f"Tagging settings do not exist, configuration:\n{config}")
+    settings = config["tagging_settings"]
+    if not bool(settings["input_file"]) or not exists(settings["input_file"]):
+        raise ValueError("Input file does not exist")
+    if not "pretagged" in settings.keys():
+        logger.warning("Information on tagging not supplied")
+        settings["pretagged"] = False
+    return settings

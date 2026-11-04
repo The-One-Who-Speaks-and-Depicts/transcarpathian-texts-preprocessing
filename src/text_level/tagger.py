@@ -14,8 +14,8 @@ from utils.utils import (
     perform_initial_check_config, set_logger
 )
 
-from utils.llm_utils import load_llm_params
 from utils.eval_utils import check_eval_parameters_by_stage
+from utils.tagging_utils import check_config_for_annotation
 
 from annotation import annotate_with_stanza, annotate_with_llm, LLMAnnotationSettings
 from utils.data_schema import get_pos_schema, get_depparse_schema, get_lemma_schema
@@ -46,9 +46,7 @@ def main(args):
     with open(config_path, 'r', encoding='utf-8') as f:
         config = safe_load(f)
     config = perform_initial_check_config(config)
-    logger.debug('Configuration loaded: %s', config)
-    exp_dir = join(config["exp_dir"], config["exp_name"])
-    create_and_set_storage_directory(exp_dir)
+    exp_dir = create_and_set_storage_directory(join(config["exp_dir"], config["exp_name"]))    
     logger.debug("Initial check finished, configuration is:\n%s\n\nSee further report in %s",
                  config,
                  exp_dir)
@@ -56,14 +54,7 @@ def main(args):
     # ==================================== Tagging/evaluation ====================================    
     match config["phase"]:
         case "pred":
-            if not bool(config["tagging_settings"]):
-                raise ValueError(f"Tagging settings do not exist, configuration:\n{config}")
-            settings = config["tagging_settings"]
-            if not bool(settings["input_file"]) or not exists(settings["input_file"]):
-                raise ValueError("Input file does not exist")
-            if not "pretagged" in settings.keys():
-                logger.warning("Information on tagging not supplied")
-                settings["pretagged"] = False
+            settings = check_config_for_annotation(config)
             match config["stage"]:
                 case "pos":
                     match config["model"]:
@@ -101,7 +92,6 @@ def main(args):
                     match config["model"]:
                         case "stanza":
                             annotate_with_stanza(
-                                # TODO: these three are the same everywhere, do the same class and a united check
                                 settings["input_file"], exp_dir, config["stage"],
                                 get_stanza_depparse_pipeline('uk', settings["pretagged"]),
                                 settings["pretagged"])
