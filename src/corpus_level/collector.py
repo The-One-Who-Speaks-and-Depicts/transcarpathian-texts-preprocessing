@@ -12,12 +12,10 @@ from corpus_distance.pipeline import create_and_set_storage_directory
 from utils.utils import perform_initial_check_config, set_logger
 
 def main(args):
-    # TODO: config loading is almost identical, there should be something more interesting to do
+    # TODO: relegate to a module of tagger
     config_path = args.config if os.path.exists(args.config) else os.path.join(os.getcwd(), 'config.yaml')
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
-    # TODO: add alternative checks if .env does not exist
-    # TODO: set separate path to dir with exps and hide it in .env, only each exp dir should be in .yaml
     experiments_storage = config["exp_dir"] if "exp_dir" in config.keys() and os.path.exists(config["exp_dir"]) else os.getcwd()
     exp_dir = os.path.join(experiments_storage, config["exp_name"])
     perform_initial_check_config(config)

@@ -10,26 +10,26 @@ from yaml import safe_load
 
 from corpus_distance.pipeline import create_and_set_storage_directory
 
-from utils.utils import (
+from utils import (
     perform_initial_check_config, set_logger
 )
 
-from utils.eval_utils import check_eval_parameters_by_stage
-from utils.tagging_utils import check_config_for_annotation
+from text_level.utils.eval_utils import check_eval_parameters_by_stage
+from text_level.utils.tagging_utils import check_config_for_annotation
 
-from annotation import annotate_with_stanza, annotate_with_llm, LLMAnnotationSettings
-from utils.data_schema import get_pos_schema, get_depparse_schema, get_lemma_schema
-from pos import get_stanza_morphology_pipeline, eval_morphology, get_pos_prompt
-from lemma import get_stanza_lemmatisation_pipeline, evaluate_lemma, get_lemma_prompt
-from depparse import  get_stanza_depparse_pipeline, get_depparse_prompt, evaluate_depparse
-from topic_modelling import perform_topic_modelling  
+from text_level.annotation import annotate_with_stanza, annotate_with_llm, LLMAnnotationSettings
+from text_level.utils.data_schema import get_pos_schema, get_depparse_schema, get_lemma_schema
+from text_level.pos import get_stanza_morphology_pipeline, eval_morphology, get_pos_prompt
+from text_level.lemma import get_stanza_lemmatisation_pipeline, evaluate_lemma, get_lemma_prompt
+from text_level.depparse import  get_stanza_depparse_pipeline, get_depparse_prompt, evaluate_depparse
+from text_level.topic_modelling import perform_topic_modelling  
 
 
 def main(args):
     # Starting with declaring a simple stdout logger to inform the user
     # of the program execution before the initialisation of the experiment
     # directory
-    logger = getLogger('preprocessor_initialize')
+    logger = getLogger('initializer')
     logger.setLevel(10)
     handler = StreamHandler(stdout)
     handler.setFormatter(Formatter(
