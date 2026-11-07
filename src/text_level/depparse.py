@@ -9,17 +9,24 @@ LLM-assisted dependency parsing,
 whether the sets of morphological features and lemmata coincide between tokens.
 * check_correct_dependency (AnnotationLabels, AnnotationLabels, bool) -> bool: checks,
 whether the sets of dependency parsing features coincide between tokens (either only head,
-or deprel as well: the bool flag regulates that)
+or deprel as well: the bool flag regulates that).
+* score_as (
+list[AnnotationLabels], list[AnnotationLabels], AttachmentScoreEvaluationParameters
+) -> float: scores attachment score, depending on the provided parameters.
+* score_uas_and_las (list[AnnotationLabels], list[AnnotationLabels], str, float, float) -> None:
+provides the values of the attachments core-based metrics for the particular part of a dataset,
+specified by a user
 """
 
 from logging import getLogger
+from typing import NamedTuple
 
 from stanza import download, Pipeline
 
 from stanza.models.common.doc import Document, Sentence, Word
 from zss import Node, simple_distance
 
-from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation, single_point_accuracy
+from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation
 from utils.llm_utils import check_prompt_parameters
 
 logger = getLogger('preprocessor')
@@ -170,29 +177,87 @@ def check_correct_dependency(
         return g.deprel == p.deprel
     return 1
 
+class AttachmentScoreEvaluationParameters(NamedTuple):
+    """
+    Contains parameters required for counting attachment score.
+
+    Params:
+        data_part (str): a name for a dataset part being evaluated
+        total (int): overall number of annotated tokens in a part of the dataset
+        is_labelled (bool): a flag to score uas (false) or las (true)
+        morphology_to_take (list[bool]): a list of bool parameters that define,
+        whether the previous morphological tagging should be correct, incorrect, or
+        not taken into account (i. e., either correct or incorrect)
+    """
+    data_part: str
+    total: int
+    is_labelled: bool
+    morphology_to_take: list[bool]
+
+def score_as(
+        gold_deps: list[AnnotationLabels],
+        pred_deps: list[AnnotationLabels],
+        params: AttachmentScoreEvaluationParameters
+        ) -> float:
+    """
+    Calculates attachment score, depending on the parameters provided.
+
+    Params:
+        gold_deps (list[AnnotationLabels]): gold annotation 
+        pred_deps (list[AnnotationLabels]): predicted annotation
+        params (AttachmentScoreEvaluationParameters): annotation parameters
+    
+    Returns:
+        float: attachment score
+    """
+    correct_items = sum(
+        1 for g, p in zip(
+            gold_deps, pred_deps
+            ) if check_correct_dependency(
+                g, p, params.is_labelled
+                ) and check_correct_morphology_and_lemma(g,p) in params.morphology_to_take
+        )
+    attachment_score = correct_items/params.total * 100 if params.total > 0 else 0
+    logger.info("%s %s items is %.2f%%",
+    "LAS" if params.is_labelled else "UAS", params.data_part, attachment_score)
+    return attachment_score
+
 def score_uas_and_las(
-        gold_deps: tuple[list[AnnotationLabels]],
-        pred_deps: tuple[list[AnnotationLabels]],
+        gold_deps: list[AnnotationLabels],
+        pred_deps: list[AnnotationLabels],
         data_part: str = "in dataset",
         gold_uas: float = -1,
         gold_las: float = -1) -> None:
+    """
+    Scores at
+    """
     total = len(gold_deps)
-    # ======================================================== TOTAL ACCURACY ======================================================================
-    uas = sum(1 for g, p in zip(gold_deps, pred_deps) if check_correct_dependency(g, p))
-    las = sum(
-        1 for g, p in zip(gold_deps, pred_deps) if check_correct_dependency(g, p, True)
+    # ================ TOTAL ACCURACY ================
+    uas_total = score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "for correct and incorrect previous tagging",
+            total,
+            False,
+            [True, False]
         )
-    uas_score = uas/total * 100 if total > 0 else 0
-    logger.info("UAS %s: %.2f%%", data_part, uas_score)
+        )
     if (gold_uas >= 0):
-        robustness_uas = robustness_score(uas_score, gold_uas)
+        robustness_uas = robustness_score(uas_total, gold_uas)
         logger.info("UAS robustness %s: %.2f", data_part, robustness_uas)
-    las_score = las/total * 100 if total > 0 else 0
-    logger.info("LAS %s: %.2f%%", data_part, las_score)
+    las_total = score_as(
+        AttachmentScoreEvaluationParameters(
+            data_part + "for correct and incorrect previous tagging",
+            total,
+            True,
+            [True, False]
+        )
+        )
+    logger.info("LAS %s: %.2f%%", data_part, las_total)
     if (gold_las >= 0):
-        robustness_las = robustness_score(las_score, gold_las)
+        robustness_las = robustness_score(las_total, gold_las)
         logger.info("LAS robustness %s: %.2f", data_part, robustness_las)
-    # ===================================================== ASSESSING PREVIOUS TAGGING ===========================================================
+    # ================ ASSESSING PREVIOUS TAGGING ================
     total_correct_tagging = sum(1 for g, p in zip(
         gold_deps, pred_deps
         ) if check_correct_morphology_and_lemma(g,p))
@@ -201,44 +266,44 @@ def score_uas_and_las(
     logger.info(
         "Share of correctly morphologically tagged items %s is %.2f%%", data_part, correct_share
         )
-    # ====================================================== ASSESSING ITEMS WITH CORRECT MORPHOLOGY ================================================
-    uas_with_correct_tagging = sum(
-        1 for g, p in zip(
-            gold_deps, pred_deps
-            ) if check_correct_dependency(g, p) and check_correct_morphology_and_lemma(g,p)
+    # ================ ASSESSING ITEMS WITH CORRECT MORPHOLOGY ================
+    score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "among correctly morphologically tagged",
+            total_correct_tagging,
+            False,
+            [True]
         )
-    uas_with_correct_tagging_share = uas_with_correct_tagging/total_correct_tagging * 100 if total_correct_tagging > 0 else 0
-    logger.info("Share of correctly syntactically tagged items %s" \
-    "among correctly morphologically tagged items is %.2f%%",
-    data_part, uas_with_correct_tagging_share)
-    las_with_correct_tagging = sum(
-        1 for g, p in zip(
-            gold_deps, pred_deps
-            ) if check_correct_dependency(g, p, True) and check_correct_morphology_and_lemma(g,p)
         )
-    las_with_correct_tagging_share = las_with_correct_tagging/total_correct_tagging * 100 if total_correct_tagging > 0 else 0
-    logger.info("Share of correctly syntactically tagged items %" \
-    "among correctly morphologically tagged items is %.2f%%",
-    data_part, las_with_correct_tagging_share)
-    # ====================================================== ASSESSING ITEMS WITH INCORRECT MORPHOLOGY ================================================
-    uas_with_incorrect_tagging = sum(
-        1 for g, p in zip(
-            gold_deps, pred_deps
-            ) if check_correct_dependency(g, p) and not check_correct_morphology_and_lemma(g,p)
+    score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "among correctly morphologically tagged",
+            total_correct_tagging,
+            True,
+            [True]
         )
-    uas_with_incorrect_tagging_share = uas_with_incorrect_tagging/total_incorrect_tagging * 100 if total_incorrect_tagging > 0 else 0
-    logger.info("Share of correctly syntactically tagged items %s" \
-    "among incorrectly morphologically tagged items is %.2f%%",
-    data_part, uas_with_incorrect_tagging_share)
-    las_with_incorrect_tagging = sum(
-        1 for g, p in zip(
-            gold_deps, pred_deps
-            ) if check_correct_dependency(g, p, True) and not check_correct_morphology_and_lemma(g,p)
         )
-    las_with_incorrect_tagging_share = las_with_incorrect_tagging/total_incorrect_tagging * 100 if total_incorrect_tagging > 0 else 0
-    logger.info("Share of correctly syntactically tagged items %s" \
-    "among incorrectly morphologically tagged items is %.2f%%",
-    data_part, las_with_incorrect_tagging_share)
+    # ================ ASSESSING ITEMS WITH INCORRECT MORPHOLOGY ================
+    score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "among incorrectly morphologically tagged",
+            total_incorrect_tagging,
+            False,
+            [False]
+        )
+        )
+    score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "among incorrectly morphologically tagged",
+            total_incorrect_tagging,
+            True,
+            [False]
+        )
+        )
 
 def get_verbal_root(sent: Sentence) -> str:
     for token in sent.tokens:
@@ -336,7 +401,7 @@ def evaluate_depparse(
     for deprel_label in deprel_labels:
         gold_and_pred_with_deprel = [i for i in zip(
             dataset_for_annotation.gold, dataset_for_annotation.pred
-            ) if i[0][4] == deprel_label]
+            ) if i[0].deprel == deprel_label]
         gold_filtered = [i[0] for i in gold_and_pred_with_deprel]
         pred_filtered = [i[1] for i in gold_and_pred_with_deprel]
         data_part = "for " + deprel_label
