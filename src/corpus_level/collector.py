@@ -13,6 +13,7 @@ from utils.utils import perform_initial_check_config, set_logger
 
 def main(args):
     # TODO: relegate to a module of tagger
+    ### === INITIAL SETUP ===
     config_path = args.config if os.path.exists(args.config) else os.path.join(os.getcwd(), 'config.yaml')
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
@@ -27,6 +28,7 @@ def main(args):
     if not bool(config["tagging_settings"]):
         raise ValueError("No settings for tagging")
     settings = config["tagging_settings"]
+    ### === gathering glosses ===
     overall_glosses = []
     for input in settings["inputs"]:
         doc = CoNLL.conll2doc(input["file"])
@@ -57,6 +59,7 @@ def main(args):
                                 be_surr.append(i)
             overall_glosses.extend(be_surr)
     overall_glosses = list(set(overall_glosses))
+    ### === gathering data ===
     bees = {}
     for input in settings["inputs"]:
         name = input["alias"]
@@ -84,6 +87,7 @@ def main(args):
             params.extend(partial_glosses)
             bees[uid] = params
     logger.info(bees)
+    # === WRITING TO FILE ===
     params = ['lect']
     params.extend(overall_glosses)
     bees = pd.DataFrame.from_dict(bees, columns=params, orient='index')
