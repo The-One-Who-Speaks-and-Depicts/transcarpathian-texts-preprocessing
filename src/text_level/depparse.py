@@ -4,7 +4,12 @@ Contains the functions, specific for dependency parsing annotation and evaluatio
 * get_stanza_depparse_pipeline (str, bool) -> Pipeline: prepares a Stanza processing pipeline
 for dependency parsing.
 * get_depparse_prompt (str, Sentence, str, bool | str) -> str: prepares a prompt for
-LLM-assisted dependency parsing.
+LLM-assisted dependency parsing,
+* check_correct_morphology_and_lemma (AnnotationLabels, AnnotationLabels) -> bool: checks,
+whether the sets of morphological features and lemmata coincide between tokens.
+* check_correct_dependency (AnnotationLabels, AnnotationLabels, bool) -> bool: checks,
+whether the sets of dependency parsing features coincide between tokens (either only head,
+or deprel as well: the bool flag regulates that)
 """
 
 from logging import getLogger
@@ -14,7 +19,7 @@ from stanza import download, Pipeline
 from stanza.models.common.doc import Document, Sentence, Word
 from zss import Node, simple_distance
 
-from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation
+from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation, single_point_accuracy
 from utils.llm_utils import check_prompt_parameters
 
 logger = getLogger('preprocessor')
@@ -128,9 +133,42 @@ def conllu_to_zss_node(sent: Sentence) -> Node | None:
                 root_id = word.id
     return node_map[root_id] if root_id else None
 
-def check_correct_morphology_and_lemma(g: tuple[list[AnnotationLabels]], p: tuple[list[AnnotationLabels]]) -> bool:
+def check_correct_morphology_and_lemma(g: AnnotationLabels, p: AnnotationLabels) -> bool:
+    """
+    Check a pair of sets of annotation labels and assesses, whether morphological
+    tagging and lemmatisation are correct.
+
+    Params:
+        g (AnnotationLabels): gold annotation labels
+        p (AnnotationLabels): predicted annotation labels
+
+    Returns:
+        bool: whether all labels of g equal all labels of p
+    """
     return g.pos == p.pos and g.feats == p.feats and g.lemma == p.lemma
 
+
+def check_correct_dependency(
+        g: AnnotationLabels, p: AnnotationLabels, is_labelled: bool = False
+        ) -> bool:
+    """
+    Check a pair of sets of annotation labels and assesses,
+    whether dependency parsing is correct.
+    
+    Params:
+        g (AnnotationLabels): gold annotation labels
+        p (AnnotationLabels): predicted annotation labels
+        is_labelled (bool): regulares, whether a function should assess
+        a deprel parameter (thus scoring las), or not (thus scoring uas)
+    
+    Returns:
+        bool: whether all labels of g equal all labels of p
+    """
+    if g.head != p.head:
+        return 0
+    if is_labelled:
+        return g.deprel == p.deprel
+    return 1
 
 def score_uas_and_las(
         gold_deps: tuple[list[AnnotationLabels]],
@@ -140,8 +178,10 @@ def score_uas_and_las(
         gold_las: float = -1) -> None:
     total = len(gold_deps)
     # ======================================================== TOTAL ACCURACY ======================================================================
-    uas = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head)
-    las = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and g.deprel == p.deprel)
+    uas = sum(1 for g, p in zip(gold_deps, pred_deps) if check_correct_dependency(g, p))
+    las = sum(
+        1 for g, p in zip(gold_deps, pred_deps) if check_correct_dependency(g, p, True)
+        )
     uas_score = uas/total * 100 if total > 0 else 0
     logger.info("UAS %s: %.2f%%", data_part, uas_score)
     if (gold_uas >= 0):
@@ -153,24 +193,52 @@ def score_uas_and_las(
         robustness_las = robustness_score(las_score, gold_las)
         logger.info("LAS robustness %s: %.2f", data_part, robustness_las)
     # ===================================================== ASSESSING PREVIOUS TAGGING ===========================================================
-    total_correct_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if check_correct_morphology_and_lemma(g,p))
+    total_correct_tagging = sum(1 for g, p in zip(
+        gold_deps, pred_deps
+        ) if check_correct_morphology_and_lemma(g,p))
     total_incorrect_tagging = total - total_correct_tagging
     correct_share = total_correct_tagging/total * 100 if total > 0 else 0
-    logger.info("Share of correctly morphologically tagged items %s is %.2f%%", data_part, correct_share)
+    logger.info(
+        "Share of correctly morphologically tagged items %s is %.2f%%", data_part, correct_share
+        )
     # ====================================================== ASSESSING ITEMS WITH CORRECT MORPHOLOGY ================================================
-    uas_with_correct_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and check_correct_morphology_and_lemma(g,p))
+    uas_with_correct_tagging = sum(
+        1 for g, p in zip(
+            gold_deps, pred_deps
+            ) if check_correct_dependency(g, p) and check_correct_morphology_and_lemma(g,p)
+        )
     uas_with_correct_tagging_share = uas_with_correct_tagging/total_correct_tagging * 100 if total_correct_tagging > 0 else 0
-    logger.info("Share of correctly syntactically tagged items %s among correctly morphologically tagged items is %.2f%%", data_part, uas_with_correct_tagging_share)
-    las_with_correct_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and g.deprel == p.deprel and check_correct_morphology_and_lemma(g,p))
+    logger.info("Share of correctly syntactically tagged items %s" \
+    "among correctly morphologically tagged items is %.2f%%",
+    data_part, uas_with_correct_tagging_share)
+    las_with_correct_tagging = sum(
+        1 for g, p in zip(
+            gold_deps, pred_deps
+            ) if check_correct_dependency(g, p, True) and check_correct_morphology_and_lemma(g,p)
+        )
     las_with_correct_tagging_share = las_with_correct_tagging/total_correct_tagging * 100 if total_correct_tagging > 0 else 0
-    logger.info("Share of correctly syntactically tagged items %s among correctly morphologically tagged items is %.2f%%", data_part, las_with_correct_tagging_share)
+    logger.info("Share of correctly syntactically tagged items %" \
+    "among correctly morphologically tagged items is %.2f%%",
+    data_part, las_with_correct_tagging_share)
     # ====================================================== ASSESSING ITEMS WITH INCORRECT MORPHOLOGY ================================================
-    uas_with_incorrect_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and not check_correct_morphology_and_lemma(g,p))
+    uas_with_incorrect_tagging = sum(
+        1 for g, p in zip(
+            gold_deps, pred_deps
+            ) if check_correct_dependency(g, p) and not check_correct_morphology_and_lemma(g,p)
+        )
     uas_with_incorrect_tagging_share = uas_with_incorrect_tagging/total_incorrect_tagging * 100 if total_incorrect_tagging > 0 else 0
-    logger.info("Share of correctly syntactically tagged items %s among incorrectly morphologically tagged items is %.2f%%", data_part, uas_with_incorrect_tagging_share)
-    las_with_incorrect_tagging = sum(1 for g, p in zip(gold_deps, pred_deps) if g.head == p.head and g.deprel == p.deprel and not check_correct_morphology_and_lemma(g,p))
+    logger.info("Share of correctly syntactically tagged items %s" \
+    "among incorrectly morphologically tagged items is %.2f%%",
+    data_part, uas_with_incorrect_tagging_share)
+    las_with_incorrect_tagging = sum(
+        1 for g, p in zip(
+            gold_deps, pred_deps
+            ) if check_correct_dependency(g, p, True) and not check_correct_morphology_and_lemma(g,p)
+        )
     las_with_incorrect_tagging_share = las_with_incorrect_tagging/total_incorrect_tagging * 100 if total_incorrect_tagging > 0 else 0
-    logger.info("Share of correctly syntactically tagged items %s among incorrectly morphologically tagged items is %.2f%%", data_part, las_with_incorrect_tagging_share)
+    logger.info("Share of correctly syntactically tagged items %s" \
+    "among incorrectly morphologically tagged items is %.2f%%",
+    data_part, las_with_incorrect_tagging_share)
 
 def get_verbal_root(sent: Sentence) -> str:
     for token in sent.tokens:
@@ -246,27 +314,40 @@ def score_cp_metrics(gold: Document, pred: Document) -> None:
                 
         
 
-def evaluate_depparse(gold_file_path: str, pred_file_path: str, gold_uas: float, gold_las: float) -> None:
-    logger.info("Dependency parsing: starting comparison between %s and %s", gold_file_path, pred_file_path)
-    # ====================================================== LOADING DATA =================================================================
+def evaluate_depparse(
+        gold_file_path: str, pred_file_path: str, gold_uas: float, gold_las: float
+        ) -> None:
+    logger.info(
+        "Dependency parsing: starting comparison between %s and %s",
+        gold_file_path, pred_file_path
+        )
+    # =================== LOADING DATA ========================
     dataset_for_annotation = prepare_annotation(gold_file_path, pred_file_path)
     pos_labels = dataset_for_annotation.labels["pos"]
     logger.info("PoS labels are %s", pos_labels)
     deprel_labels = dataset_for_annotation.labels["deprel"]
     logger.info("Syntactic labels are %s", deprel_labels)
-    # ================================================ DOCUMENT-SPAN METRICS =====================================================================
-    ted_distances = [simple_distance(conllu_to_zss_node(sent1), conllu_to_zss_node(sent2)) for sent1, sent2 in zip(dataset_for_annotation.gold_doc.sentences, dataset_for_annotation.pred_doc.sentences)]
-    ted = sum(ted_distances)/len(ted_distances)
-    logger.info("Average tree edit distance is %.2f", ted)
-    score_uas_and_las(dataset_for_annotation.gold, dataset_for_annotation.pred, gold_uas=gold_uas, gold_las=gold_las)
-    score_cp_metrics(dataset_for_annotation.gold_doc, dataset_for_annotation.pred_doc)
-    # ======================================= FINE-GRAINED: PoS + deprel==========================================================================
+    # =================== UAS & LAS ===========================
+    score_uas_and_las(
+        dataset_for_annotation.gold, dataset_for_annotation.pred,
+        data_part="in the dataset",
+        gold_uas=gold_uas, gold_las=gold_las
+        )
     for deprel_label in deprel_labels:
-        gold_and_pred_with_deprel = [i for i in zip(dataset_for_annotation.gold, dataset_for_annotation.pred) if i[0][4] == deprel_label]
+        gold_and_pred_with_deprel = [i for i in zip(
+            dataset_for_annotation.gold, dataset_for_annotation.pred
+            ) if i[0][4] == deprel_label]
         gold_filtered = [i[0] for i in gold_and_pred_with_deprel]
         pred_filtered = [i[1] for i in gold_and_pred_with_deprel]
         data_part = "for " + deprel_label
         score_uas_and_las(gold_filtered, pred_filtered, data_part)
-
-            
+    # ============= DOCUMENT-SPAN METRICS ====================
+    ted_distances = [simple_distance(
+        conllu_to_zss_node(sent1), conllu_to_zss_node(sent2)
+        ) for sent1, sent2 in zip(
+            dataset_for_annotation.gold_doc.sentences, dataset_for_annotation.pred_doc.sentences
+            )]
+    ted = sum(ted_distances)/len(ted_distances)
+    logger.info("Average tree edit distance is %.2f", ted)
+    score_cp_metrics(dataset_for_annotation.gold_doc, dataset_for_annotation.pred_doc)            
 
