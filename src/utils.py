@@ -68,12 +68,8 @@ def perform_initial_check_config(config: Any) -> Any:
         raise ValueError("No folder for the experiment results")
     if not bool(config["tagging_settings"]):
         raise ValueError("No settings for tagging")
-    if not bool(config["phase"]) or config["phase"] not in ["eval", "pred"]:
+    if not bool(config["phase"]) or config["phase"] not in ["eval", "pred", "gather"]:
         raise ValueError("Phase parameter is set incorrectly")
-    if not bool(config["stage"]) or config["stage"] not in ["pos", "lemma", "depparse", "topic"]:
-        raise ValueError("Stage parameter is set incorrectly")
-    if not bool(config["model"]) or config["model"] not in ["stanza", "llm"]:
-        raise ValueError("Model parameter is set incorrectly")
     if not "exp_dir" in config.keys() or not exists(config["exp_dir"]):
         setattr(config, "exp_dir", getcwd())
     return config

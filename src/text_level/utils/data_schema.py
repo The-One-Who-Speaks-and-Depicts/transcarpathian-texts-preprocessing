@@ -1,5 +1,5 @@
 """
-Stores the JSON data schemas for LLM-based tagging.
+Stores JSON data schemas for LLM-based tagging.
 
 * get_pos_schema (stanza.models.common.doc.Sentence, list[str] -> dict):
 takes a CoNLL-U sentence and a list of its tokens, and returns a schema
@@ -19,7 +19,7 @@ logger = getLogger('preprocessor')
 
 def get_pos_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
     """
-    Returns a schema for morphological tagging, based on the provided 
+    Returns a schema for morphological tagging, based on a provided 
     sentence and its tokens.
 
     Params:
@@ -68,12 +68,12 @@ def get_pos_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
             },
         }
     }
-    logger.info("Generated schema:\n%s", schema)
+    logger.debug("Generated schema:\n%s", schema)
     return schema
 
 def get_lemma_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
     """
-    Returns a schema for lemmatisation, based on the provided 
+    Returns a schema for lemmatisation, based on a provided 
     sentence and its tokens.
     
     Params:
@@ -115,13 +115,13 @@ def get_lemma_schema(sent: Sentence, sent_tokens: list[str]) -> dict:
             },
         }
     }
-    logger.info("Generated schema:\n%s", schema)
+    logger.debug("Generated schema:\n%s", schema)
     return schema
 
 
 def get_depparse_schema(sent: Sentence) -> dict:
     """
-    Returns a schema for lemmatisation, based on the provided 
+    Returns a schema for lemmatisation, based on a provided 
     sentence and its tokens.
     
     Params:
@@ -178,5 +178,5 @@ def get_depparse_schema(sent: Sentence) -> dict:
             },
         }
     }
-    logger.info("Generated schema:\n%s", schema)
+    logger.debug("Generated schema:\n%s", schema)
     return schema

@@ -97,7 +97,7 @@ def load_llm_client(api: str, key: str, url: str) -> OpenAI:
                 api_key=key,
                 base_url=url
             )
-            logger.info("Loading an OpenAI-like API client, base_url: %s")
+            logger.debug("Loading an OpenAI-like API client, base_url: %s")
             return client
         case _:
             raise ValueError(f"Incorrect API type, received {api}")
@@ -156,12 +156,12 @@ def process_llm_errors(
         original_prompt: str
         ) -> tuple[int, str]:
     """
-    Takes the information on the LLM error and its processing to update prompt
+    Takes information on an LLM error and its processing to update prompt
     and retries counter.
 
     Params:
-        e (Exception): the received exception, usually a ValueError
-        retries (int): the current value of the counter that scores how many times
+        e (Exception): a received exception, usually a ValueError
+        retries (int): a current value of the counter that scores how many times
         an LLM attempted to perform the task
         max_retries (int): the maximum possible value of the counter that scores how many times
         an LLM attempted to perform the task
@@ -195,7 +195,7 @@ def transfer_llm_annotation(
     to a CoNLL-U document.
 
     Params:
-        doc_for_processing (Document): the CoNLL-U document, presented through
+        doc_for_processing (Document): a CoNLL-U document, presented through
         a stanza.models.common.doc.Document class
         sent_idx (int): the index of an analysed sentence in the document
         sent (Sentence): the analysed sentence
@@ -269,3 +269,4 @@ def check_prompt_parameters(prompt_template: str, sent: Sentence, sent_tokenised
         raise TypeError(f"sent_tokenised should be a string, received {sent_tokenised}")
     if not isinstance(pretagged, bool) and not isinstance(pretagged, str):
         raise TypeError(f"pretagged should be either a boolean or a string, received {pretagged}")
+    logger.debug("Prompt parameters checked successfully")

@@ -90,7 +90,7 @@ def annotate_with_llm(
         stage, str
     ) or not stage or not stage.strip():
         raise ValueError(f"Stage parameter is set incorrectly, received {stage}")
-    doc, doc_for_processing = load_input_data(input_file_path)
+    doc, doc_for_processing = load_input_data(input_file_path, pretagged)
     params = load_llm_params(settings["llm_params"])
     client = load_llm_client(params.api, params.api_key, params.base_url)
     if not isinstance(exp_folder, str) or not exists(exp_folder) or not isdir(exp_folder):

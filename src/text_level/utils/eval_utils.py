@@ -85,6 +85,8 @@ def check_eval_parameters_by_stage(config: Any, stage: str) -> dict:
         dict: an experiment configuration object, either amended by a function, or preserved as is
     """
     logger.debug("Input: %s")
+    if not bool(config["stage"]) or config["stage"] not in ["pos", "lemma", "depparse"]:
+        raise ValueError("Stage parameter is set incorrectly")
     if not bool(config["evaluation_settings"]):
         raise ValueError(f"Evaluation settings do not exist, configuration:\n{config}")
     settings = config["evaluation_settings"]
@@ -93,7 +95,7 @@ def check_eval_parameters_by_stage(config: Any, stage: str) -> dict:
     if not bool(settings["gold_file"]) or not isfile(settings["gold_file"]):
         raise ValueError(f"File with gold annotation does not exist" \
                          f", received {settings['gold_file']}")
-    logger.info("The evaluation parameters successfully checked; " \
+    logger.debug("The evaluation parameters successfully checked; " \
     "checking predictions in %s against gold annotation in %s",
     settings["pred_file"], settings["gold_file"])
     settings["train_class"] = check_original_evaluation(settings, "train_class")
@@ -272,9 +274,9 @@ def get_lcss_indices(
     """
     Takes two strings and returns a tuple with indices
     of their first longest common substring
-    from them, with possible regulations for the sequences of length 1.
+    from them, with possible regulations for the sequences of user-defined length.
 
-    Arguments:
+    Params:
         comparable, compared (str): string to compare. The difference between
         comparable and compared is crucial, as if comparable contains two LCCs between it
         and compared, the algorithm returns only the indices of first LCC.

@@ -13,7 +13,10 @@ from sklearn.metrics import precision_recall_fscore_support
 from stanza import download, Pipeline
 from stanza.models.common.doc import Document, Sentence
 
-from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation, store_rapidity_rate
+from utils.eval_utils import (
+    robustness_score,
+    AnnotationLabels, prepare_annotation,
+    store_rapidity_rate)
 from utils.llm_utils import check_prompt_parameters
 
 logger = getLogger('preprocessor')
@@ -72,9 +75,13 @@ def score_for_single_pos(pred: list, true: list, label: str) -> None:
     size_of_label = len([i for i in true if i == label])
     share = size_of_label/overall_size
     correct = len([i for i in zip(pred, true) if i[1] == label and i[0] == i[1]])
-    # I do not score F1 for single label, because for labels with low share it is going to be very low-informative
+    # I do not score F1 for single label, because for labels with low share
+    # it is going to be very low-informative
     acc = correct/size_of_label
-    logger.info("Accuracy for %s is %.2f%s, the share of %s in dataset is %.2f%s", label, acc*100, "%", label, share*100, "%")
+    logger.info(
+        "Accuracy for %s is %.2f%s, the share of %s in dataset is %.2f%s",
+        label, acc*100, "%", label, share*100, "%"
+        )
 
 def score_single_feat_acc(key: str, value: str, true: dict) -> int:
     if key not in true.keys():
@@ -153,9 +160,13 @@ def check_for_correct_feat(pred_feats: str | None, correct_feats: str | None, la
 def score_for_single_morph_feature(pred: list, true: list, label: str) -> None:
     relevant_tokens = [i for i in zip(pred, true) if check_for_label_in_feats(i[1], label)]
     correct = len([i for i in relevant_tokens if check_for_correct_feat(i[0], i[1], label)])
-    # I do not score F1 for single label, because for labels with low share it is going to be very low-informative
+    # I do not score F1 for single label,
+    # because for labels with low share it is going to be very low-informative
     acc = correct/len(relevant_tokens)
-    logger.info("Accuracy for %s is %.2f%s from %s tokens", label, acc*100, "%", len(relevant_tokens))
+    logger.info(
+        "Accuracy for %s is %.2f%s from %s tokens",
+        label, acc*100, "%", len(relevant_tokens)
+        )
 
 
 def score_pos_rapidity_rate(pred: any, true: any) -> int:
@@ -166,8 +177,8 @@ def score_pos_rapidity_rate(pred: any, true: any) -> int:
         # wrong (due to morphology features being generally dependent on part-of-speech)
         # Thus, heat rapidity rate of part-of-speech error should be higher than rapidity rate
         # for getting all the morphological features incorrect; at the same time, it would be
-        # unjust to punish the model for getting them incorrect as well. This leads to automatically
-        # returning 7 in case of a part-of-speech error.
+        # unjust to punish the model for getting them incorrect as well. 
+        # This leads to automatically returning 7 in case of a part-of-speech error.
         return 7
     if pred.feats == None:
         if true.feats == None:
@@ -196,11 +207,14 @@ def assign_pos_rapidity_rate(pred: Document, gold: Document) -> Document:
                 if gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc == None:
                     gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc = rate_param
                 else:
-                    gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc = gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc + '|' + rate_param
+                    updated_misc = getattr(
+                        gold.sentences[sent_idx].tokens[token_idx].words[word_idx], 'misc'
+                        ) + '|' + rate_param
+                    gold.sentences[sent_idx].tokens[token_idx].words[word_idx].misc = updated_misc
     return gold
 
 
-def eval_pos(
+def evaluate_pos(
         gold_pos: list[AnnotationLabels], pred_pos: list[AnnotationLabels],
         train_result: float, labels: list[str]
         ) -> None:
@@ -215,13 +229,20 @@ def eval_pos(
     logger.info('PoS recall: %.2f%s', common_results[1] * 100, "%")
     logger.info('PoS macro F1-score: %.2f%s', common_results[2] * 100, "%")
     if (train_result and train_result >= 0):
-        logger.info('PoS robustness:  %.2f', robustness_score(train_result, common_results[2] * 100))
+        logger.info(
+            'PoS robustness:  %.2f',
+            robustness_score(train_result, common_results[2] * 100)
+            )
     for pos in labels:
         logger.debug('Starting scoring accuracy score for %s', pos)
         score_for_single_pos(pred_pos, gold_pos, pos)
 
 
-def eval_feats(gold_morph: list[AnnotationLabels], pred_morph: list[AnnotationLabels], train_result: float, labels: list[str]) -> None:
+def evaluate_feats(
+        gold_morph: list[AnnotationLabels], pred_morph: list[AnnotationLabels],
+        train_result: float,
+        labels: list[str]
+        ) -> None:
     gold_morph = [a.feats for a in gold_morph]
     pred_morph = [a.feats for a in pred_morph]
     morph_comparison = [score_feats_acc(i[0], i[1]) for i in zip(pred_morph, gold_morph)]
@@ -230,12 +251,15 @@ def eval_feats(gold_morph: list[AnnotationLabels], pred_morph: list[AnnotationLa
     ufeats_exact = len([i for i in zip(gold_morph, pred_morph) if i[0] == i[1]])/len(gold_morph)
     logger.info("UFeats exact match: %.2f%s", ufeats_exact*100, "%")
     if (train_result and train_result >= 0):
-        logger.info('UFeats exact robustness:  %.2f', robustness_score(train_result, ufeats_exact * 100))
+        logger.info(
+            'UFeats exact robustness:  %.2f',
+            robustness_score(train_result, ufeats_exact * 100)
+            )
     for morph in labels:
         logger.debug('Starting scoring accuracy score for %s', morph)
         score_for_single_morph_feature(pred_morph, gold_morph, morph)
 
-def eval_morphology(
+def evaluate_morphology(
         gold_file_path: str,
         pred_file_path: str,
         train_result: float,
@@ -246,19 +270,21 @@ def eval_morphology(
     logger.info("POS: starting comparison between %s and %s", gold_file_path, pred_file_path)
     dataset_for_annotation = prepare_annotation(gold_file_path, pred_file_path)
     logger.info("PoS and morphological labels are %s", dataset_for_annotation['labels'])
-    eval_pos(
+    evaluate_pos(
         dataset_for_annotation['gold'],
         dataset_for_annotation['pred'],
         train_result,
         dataset_for_annotation['labels']['pos']
         )
-    eval_feats(
+    evaluate_feats(
         dataset_for_annotation['gold'],
         dataset_for_annotation['pred'],
         train_ufeats,
         dataset_for_annotation['labels']['feats']
         )    
-    gold_with_rapidity = assign_pos_rapidity_rate(dataset_for_annotation['pred_doc'], dataset_for_annotation['gold_doc'])
+    gold_with_rapidity = assign_pos_rapidity_rate(
+        dataset_for_annotation['pred_doc'], dataset_for_annotation['gold_doc']
+        )
     store_rapidity_rate(gold_with_rapidity, gold_file_path, exp_folder)
     logger.info("PoS and morphological tagging evaluation is finished")
 
