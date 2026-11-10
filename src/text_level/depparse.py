@@ -1,0 +1,418 @@
+"""
+Contains the functions, specific for dependency parsing annotation and evaluation.
+
+* get_stanza_depparse_pipeline (str, bool) -> Pipeline: prepares a Stanza processing pipeline
+for dependency parsing.
+* get_depparse_prompt (str, Sentence, str, bool | str) -> str: prepares a prompt for
+LLM-assisted dependency parsing,
+* check_correct_morphology_and_lemma (AnnotationLabels, AnnotationLabels) -> bool: checks,
+whether the sets of morphological features and lemmata coincide between tokens.
+* check_correct_dependency (AnnotationLabels, AnnotationLabels, bool) -> bool: checks,
+whether the sets of dependency parsing features coincide between tokens (either only head,
+or deprel as well: the bool flag regulates that).
+* score_as (
+list[AnnotationLabels], list[AnnotationLabels], AttachmentScoreEvaluationParameters
+) -> float: scores attachment score, depending on the provided parameters.
+* score_uas_and_las (list[AnnotationLabels], list[AnnotationLabels], str, float, float) -> None:
+provides the values of the attachments core-based metrics for the particular part of a dataset,
+specified by a user
+"""
+
+from logging import getLogger
+from typing import NamedTuple
+
+from stanza import download, Pipeline
+
+from stanza.models.common.doc import Document, Sentence, Word
+from zss import Node, simple_distance
+
+from utils.eval_utils import robustness_score, AnnotationLabels, prepare_annotation
+from utils.llm_utils import check_prompt_parameters
+
+logger = getLogger('preprocessor')
+
+def preprocess_conllu_word_for_depparse(word: Word, pretagged: bool | str) -> str:
+    text = word.text
+    if not pretagged:
+        return text
+    upos = word.pos if hasattr(
+        word, 'pos'
+        ) and word.pos is not None and word.pos.strip() else '_'
+    feats = word.feats if hasattr(
+        word, 'feats'
+        ) and word.feats is not None and word.feats.strip() else '_'
+    lemma = word.lemma if hasattr(
+        word, 'lemma'
+        ) and word.lemma is not None and word.lemma.strip() else '_'
+    if pretagged == 'detokenised':
+        return ' '.join([upos, feats])
+    return ' '.join([text, lemma, upos, feats])
+
+
+def get_stanza_depparse_pipeline(lang: str = 'uk', pretagged: bool = True) -> Pipeline:
+    """
+    Returns a Stanza dependency parsing Pipeline for provided language and previously
+    available information.
+
+    Params:
+        lang (str): a language code (see Stanza documentation for the list of available languages)
+        pretagged (bool): information on whether lemmatisation already happened
+
+    Returns:
+        stanza.Pipeline: a Stanza Pipeline for dependency parsing
+    """
+    logger.debug("Input: %s", locals())
+    download(lang)
+    nlp = Pipeline(
+        lang=lang,
+        processors=['tokenize', 'depparse'],
+        use_gpu=True,
+        tokenize_pretokenized=True,
+        depparse_pretagged=True
+        ) if pretagged else Pipeline(
+            lang=lang,
+            processors=['tokenize', 'pos', 'lemma', 'depparse'],
+            use_gpu=True,
+            tokenize_pretokenized=True
+            )
+    return nlp
+
+
+
+def get_depparse_prompt(
+        prompt_template: str,
+        sent: Sentence, sent_tokenised: str,
+        pretagged: bool | str = True
+        ) -> str:
+    """
+    Takes a prompt template, information about a sentence to tag (including its tokenised form),
+    and information on whether morphological annotation and lemmatisation are available to prepare
+    a prompt for LLM-based dependency parsing.
+
+    Params:
+        prompt_template (str): a prompt of a template
+        sent (stanza.models.commom.doc.Sentence): a CoNLL-U sentence
+        sent_tokenised (str): tokens of a sentence, stored in sent
+        pretagged (bool | str): information on the previously performed annotation available:
+            - detokenised: only morphological tags
+            - True: tokens, lemmata and morphological tags
+            - False: only tokens
+    
+    Returns:
+        str: a prompt prepared for a model
+    """
+    check_prompt_parameters(prompt_template, sent, sent_tokenised, pretagged)
+    prompt = prompt_template.format(
+        sent=f"{sent_tokenised}\nTokens:\n{
+            '\n'.join(
+                [' '.join(
+                    [
+                        str(w.id),
+                        ':',
+                        preprocess_conllu_word_for_depparse(w, pretagged)
+                    ]
+                     ) for w in sent.words]
+                ) + '\n'
+            }"
+        )
+    logger.debug("Prompt is assembled:\n %s", prompt)
+    return prompt
+
+def conllu_to_zss_node(sent: Sentence) -> Node | None:
+    node_map = {}
+    for token in sent.tokens:
+        for word in token.words:
+            node_name = f"{word.text}_{word.id}"
+            node = Node(node_name)
+            node_map[word.id] = node    
+    for token in sent.tokens:
+        for word in token.words:
+            parent_id = word.head
+            if parent_id != 0:
+                parent_node = node_map[parent_id]
+                child_node = node_map[word.id]
+                parent_node.addkid(child_node)
+    
+    root_id = None
+    for token in sent.tokens:
+        for word in token.words:
+            if word.head == 0:
+                root_id = word.id
+    return node_map[root_id] if root_id else None
+
+def check_correct_morphology_and_lemma(g: AnnotationLabels, p: AnnotationLabels) -> bool:
+    """
+    Check a pair of sets of annotation labels and assesses, whether morphological
+    tagging and lemmatisation are correct.
+
+    Params:
+        g (AnnotationLabels): gold annotation labels
+        p (AnnotationLabels): predicted annotation labels
+
+    Returns:
+        bool: whether all labels of g equal all labels of p
+    """
+    return g.pos == p.pos and g.feats == p.feats and g.lemma == p.lemma
+
+
+def check_correct_dependency(
+        g: AnnotationLabels, p: AnnotationLabels, is_labelled: bool = False
+        ) -> bool:
+    """
+    Check a pair of sets of annotation labels and assesses,
+    whether dependency parsing is correct.
+    
+    Params:
+        g (AnnotationLabels): gold annotation labels
+        p (AnnotationLabels): predicted annotation labels
+        is_labelled (bool): regulares, whether a function should assess
+        a deprel parameter (thus scoring las), or not (thus scoring uas)
+    
+    Returns:
+        bool: whether all labels of g equal all labels of p
+    """
+    if g.head != p.head:
+        return 0
+    if is_labelled:
+        return g.deprel == p.deprel
+    return 1
+
+class AttachmentScoreEvaluationParameters(NamedTuple):
+    """
+    Contains parameters required for counting attachment score.
+
+    Params:
+        data_part (str): a name for a dataset part being evaluated
+        total (int): overall number of annotated tokens in a part of the dataset
+        is_labelled (bool): a flag to score uas (false) or las (true)
+        morphology_to_take (list[bool]): a list of bool parameters that define,
+        whether the previous morphological tagging should be correct, incorrect, or
+        not taken into account (i. e., either correct or incorrect)
+    """
+    data_part: str
+    total: int
+    is_labelled: bool
+    morphology_to_take: list[bool]
+
+def score_as(
+        gold_deps: list[AnnotationLabels],
+        pred_deps: list[AnnotationLabels],
+        params: AttachmentScoreEvaluationParameters
+        ) -> float:
+    """
+    Calculates attachment score, depending on the parameters provided.
+
+    Params:
+        gold_deps (list[AnnotationLabels]): gold annotation 
+        pred_deps (list[AnnotationLabels]): predicted annotation
+        params (AttachmentScoreEvaluationParameters): annotation parameters
+    
+    Returns:
+        float: attachment score
+    """
+    correct_items = sum(
+        1 for g, p in zip(
+            gold_deps, pred_deps
+            ) if check_correct_dependency(
+                g, p, params.is_labelled
+                ) and check_correct_morphology_and_lemma(g,p) in params.morphology_to_take
+        )
+    attachment_score = correct_items/params.total * 100 if params.total > 0 else 0
+    logger.info("%s %s items is %.2f%%",
+    "LAS" if params.is_labelled else "UAS", params.data_part, attachment_score)
+    return attachment_score
+
+def score_uas_and_las(
+        gold_deps: list[AnnotationLabels],
+        pred_deps: list[AnnotationLabels],
+        data_part: str = "in dataset",
+        gold_uas: float = -1,
+        gold_las: float = -1) -> None:
+    """
+    Scores at
+    """
+    total = len(gold_deps)
+    # ================ TOTAL ACCURACY ================
+    uas_total = score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "for correct and incorrect previous tagging",
+            total,
+            False,
+            [True, False]
+        )
+        )
+    if (gold_uas >= 0):
+        robustness_uas = robustness_score(uas_total, gold_uas)
+        logger.info("UAS robustness %s: %.2f", data_part, robustness_uas)
+    las_total = score_as(
+        AttachmentScoreEvaluationParameters(
+            data_part + "for correct and incorrect previous tagging",
+            total,
+            True,
+            [True, False]
+        )
+        )
+    logger.info("LAS %s: %.2f%%", data_part, las_total)
+    if (gold_las >= 0):
+        robustness_las = robustness_score(las_total, gold_las)
+        logger.info("LAS robustness %s: %.2f", data_part, robustness_las)
+    # ================ ASSESSING PREVIOUS TAGGING ================
+    total_correct_tagging = sum(1 for g, p in zip(
+        gold_deps, pred_deps
+        ) if check_correct_morphology_and_lemma(g,p))
+    total_incorrect_tagging = total - total_correct_tagging
+    correct_share = total_correct_tagging/total * 100 if total > 0 else 0
+    logger.info(
+        "Share of correctly morphologically tagged items %s is %.2f%%", data_part, correct_share
+        )
+    # ================ ASSESSING ITEMS WITH CORRECT MORPHOLOGY ================
+    score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "among correctly morphologically tagged",
+            total_correct_tagging,
+            False,
+            [True]
+        )
+        )
+    score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "among correctly morphologically tagged",
+            total_correct_tagging,
+            True,
+            [True]
+        )
+        )
+    # ================ ASSESSING ITEMS WITH INCORRECT MORPHOLOGY ================
+    score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "among incorrectly morphologically tagged",
+            total_incorrect_tagging,
+            False,
+            [False]
+        )
+        )
+    score_as(
+        gold_deps, pred_deps,
+        AttachmentScoreEvaluationParameters(
+            data_part + "among incorrectly morphologically tagged",
+            total_incorrect_tagging,
+            True,
+            [False]
+        )
+        )
+
+def get_verbal_root(sent: Sentence) -> str:
+    for token in sent.tokens:
+        for word in token.words:
+            if word.pos == 'VERB' and word.deprel == 'root':
+                return word.id
+    return ''
+
+def get_root_deps(sent: Sentence, root: str) -> list[tuple[str, str]]:
+    deps = []
+    for token in sent.tokens:
+        for word in token.words:
+            if word.head == root:
+                deps.append((word.id, word.deprel))
+    return deps
+
+def get_cp(doc: Document) -> list[dict]:
+    cps = []
+    for sent in doc.sentences:
+        cp = {'id': sent.sent_id, 'root': get_verbal_root(sent)}
+        if cp['root']:
+            cp['deps'] = get_root_deps(sent, cp['root'])
+            cps.append(cp)
+    return cps
+
+def get_coinciding_cps(gold: list[dict], pred: list[dict]) -> list[dict]:
+    pred_ids = [cp['id'] for cp in pred]
+    return [cp for cp in gold if cp['id'] in pred_ids]
+
+def score_ucp(gold: list[tuple[str, str]], pred: list[tuple[str, str]]) -> float:
+    pred_heads = [i[0] for i in pred]
+    gold_heads = [i[0] for i in gold]
+    all_heads = len(list(set(pred_heads + gold_heads)))
+    pred_in_gold = len([i for i in pred_heads if i in gold_heads])    
+    return pred_in_gold/all_heads
+
+
+def score_lcp(gold: list[tuple[str, str]], pred: list[tuple[str, str]]) -> float:
+    pred_heads_with_labels = [(i[0], i[1]) for i in pred]
+    gold_heads_with_labels = [(i[0], i[1]) for i in gold]
+    all_heads_with_labels = len(list(set(pred_heads_with_labels + gold_heads_with_labels)))
+    pred_in_gold = len([i for i in pred_heads_with_labels if i in gold_heads_with_labels])    
+    return pred_in_gold/all_heads_with_labels
+
+def score_individual_cp(gold: dict, pred: list[dict]) -> tuple[float, float]:    
+    for pred_cp in pred:
+        if pred_cp['id'] == gold['id']:
+            if len(gold['deps']) == 0:
+                if len(pred_cp['deps']) == 0:
+                    return (1, 1)
+                return (0, 0)
+            if len(pred_cp['deps']) == 0:
+                return (0, 0)
+            return (score_ucp(gold['deps'], pred_cp['deps']), score_lcp(gold['deps'], pred_cp['deps']))
+
+
+
+def score_cp_metrics(gold: Document, pred: Document) -> None:
+    gold_cps = get_cp(gold)
+    pred_cps = get_cp(pred)
+    coinciding_gold_cps = get_coinciding_cps(gold_cps, pred_cps)
+    ucp = [0 for _ in range(len(gold_cps) - len(coinciding_gold_cps))]
+    lcp = [0 for _ in range(len(gold_cps) - len(coinciding_gold_cps))]
+    for cp in coinciding_gold_cps:
+        individual_ucp, individual_lcp = score_individual_cp(cp, pred_cps)
+        ucp.append(individual_ucp)
+        lcp.append(individual_lcp)
+    ucp = sum(ucp)/len(gold_cps) * 100
+    lcp = sum(lcp)/len(gold_cps) * 100
+    logger.info("UCP is %.2f%%", ucp)
+    logger.info("LCP is %.2f%%", lcp)
+        
+                
+        
+
+def evaluate_depparse(
+        gold_file_path: str, pred_file_path: str, gold_uas: float, gold_las: float
+        ) -> None:
+    logger.info(
+        "Dependency parsing: starting comparison between %s and %s",
+        gold_file_path, pred_file_path
+        )
+    # =================== LOADING DATA ========================
+    dataset_for_annotation = prepare_annotation(gold_file_path, pred_file_path)
+    pos_labels = dataset_for_annotation.labels["pos"]
+    logger.info("PoS labels are %s", pos_labels)
+    deprel_labels = dataset_for_annotation.labels["deprel"]
+    logger.info("Syntactic labels are %s", deprel_labels)
+    # =================== UAS & LAS ===========================
+    score_uas_and_las(
+        dataset_for_annotation.gold, dataset_for_annotation.pred,
+        data_part="in the dataset",
+        gold_uas=gold_uas, gold_las=gold_las
+        )
+    for deprel_label in deprel_labels:
+        gold_and_pred_with_deprel = [i for i in zip(
+            dataset_for_annotation.gold, dataset_for_annotation.pred
+            ) if i[0].deprel == deprel_label]
+        gold_filtered = [i[0] for i in gold_and_pred_with_deprel]
+        pred_filtered = [i[1] for i in gold_and_pred_with_deprel]
+        data_part = "for " + deprel_label
+        score_uas_and_las(gold_filtered, pred_filtered, data_part)
+    # ============= DOCUMENT-SPAN METRICS ====================
+    ted_distances = [simple_distance(
+        conllu_to_zss_node(sent1), conllu_to_zss_node(sent2)
+        ) for sent1, sent2 in zip(
+            dataset_for_annotation.gold_doc.sentences, dataset_for_annotation.pred_doc.sentences
+            )]
+    ted = sum(ted_distances)/len(ted_distances)
+    logger.info("Average tree edit distance is %.2f", ted)
+    score_cp_metrics(dataset_for_annotation.gold_doc, dataset_for_annotation.pred_doc)            
+
